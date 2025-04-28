@@ -1,8 +1,31 @@
 # Winter
-Winter aims to be a ultra low latency framework utilizing various C++ 20 design philosophies, namely 
-Cache warming 
-Constexpr
-Machine code emission (JIT Compiler)
-To achieve microsecond calculations and test strategies on a dummy socket environment on a historical trade data. 
 
-Currently it is also my learning experience so alot of these things are not upto industry standard however I will keep updating this project to incorporate various strategies.
+**Winter** is an ultra–low-latency C++20 framework designed to let you:
+
+- **Warm your cache** up front  
+- Leverage **`constexpr`** to push computations to compile time  
+- Emit machine code on the fly via a simple **JIT compiler**  
+
+…and hit **microsecond-level** strategy execution on a **dummy socket** feeding you historical tick data.
+
+---
+
+
+
+- **Cache Warming**  
+  Pre-loads your hot-path data into L1 so you never stall on a cold line.
+
+- **`constexpr` Everywhere**  
+  Push as much work as possible into compile time for zero-overhead runtime.
+
+- **JIT Compilation**  
+  Generate bespoke machine-code snippets at runtime for your tightest loops.
+
+- **Dummy Socket Engine**  
+  Replay historical trade feeds in real time, so you can back-test strategies in a realistic environment.
+
+- **Microsecond-Scale Metrics**  
+  Instrument every stage from parse → compute → emit with sub-µs timing.
+
+---
+
