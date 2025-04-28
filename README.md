@@ -1,9 +1,10 @@
 # Winter
 
-**Winter** is an ultra–low-latency C++20 framework designed to let you:
+**Winter** aims to be an ultra–low-latency C++20 framework designed to let you:
 
 - **Warm your cache** up front  
-- Leverage **`constexpr`** to push computations to compile time  
+- Leverage **`constexpr`** to push computations to compile time
+- Avoid Locks -Hurt the cache *ALOT.
 - Emit machine code on the fly via a simple **JIT compiler**  
 
 …and hit **microsecond-level** strategy execution on a **dummy socket** feeding you historical tick data.
