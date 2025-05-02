@@ -30,3 +30,4 @@
 
 ---
 
+ g++ -I./include -L./lib warmcache.cpp -std=c++20 -O3 -o warmcache.exe -lzmq
