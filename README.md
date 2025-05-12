@@ -19,9 +19,6 @@
 - **`constexpr` Everywhere**  
   Push as much work as possible into compile time for zero-overhead runtime.
 
-- **JIT Compilation**  
-  Generate bespoke machine-code snippets at runtime for your tightest loops.
-
 - **Dummy Socket Engine**  
   Replay historical trade feeds in real time, so you can back-test strategies in a realistic environment.
 
@@ -30,4 +27,10 @@
 
 ---
 
- g++ -I./include -L./lib warmcache.cpp -std=c++20 -O3 -o warmcache.exe -lzmq
+How to use?
+Clone the repo.
+use "make" command.
+./build/simulate to start the simulation, by default it starts with a 100,000$ budget and utilizes a mean-reversion trading strategy. 
+
+once the code starts running, it will wait for the dummy socket data feed. 
+start the dummy socket python code. 
