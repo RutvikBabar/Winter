@@ -1,7 +1,9 @@
 # Winter
 
 **Winter** aims to be an ultra–low-latency C++20 framework designed to let you:
-
+- Simulate market trades on a dummy socket
+- Backtest your strategies
+- Emit an optimized c++ code for your strategies to fit into the framework
 - **Warm your cache** up front  
 - Leverage **`constexpr`** to push computations to compile time
 - Avoid Locks -Hurt the cache *ALOT.
