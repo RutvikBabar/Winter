@@ -18,7 +18,7 @@ public:
     
     // Helper template for registering strategies
     template<typename T, typename... Args>
-    static StrategyPtr create_and_register(Args&&... args) {
+    static constexpr StrategyPtr create_and_register(Args&&... args) {
         auto strategy = std::make_shared<T>(std::forward<Args>(args)...);
         register_strategy(strategy);
         return strategy;

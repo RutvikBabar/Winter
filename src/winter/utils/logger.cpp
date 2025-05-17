@@ -81,6 +81,5 @@ void Logger::set_level(LogLevel level) {
     current_level_ = level;
 }
 
-const Logger::EndlType Logger::endl = {};
 
 } // namespace winter::utils

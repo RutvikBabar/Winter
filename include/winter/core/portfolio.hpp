@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace winter::core {
 
@@ -9,12 +10,23 @@ struct Position {
     double cost;   // Not atomic
 };
 
+// Add this struct to track trades
+struct Trade {
+    std::string symbol;
+    std::string side;
+    int quantity;
+    double price;
+    double cost;
+    double profit;
+    std::string timestamp;
+};
 
 class Portfolio {
 private:
     double cash_;
     std::unordered_map<std::string, Position> positions_;
     int trade_count_;
+    std::vector<Trade> trades_;  // Add this member variable
     
 public:
     Portfolio();
@@ -31,6 +43,11 @@ public:
     
     double total_value() const;
     int trade_count() const;
+    
+    // Add this method to access trades
+    const std::vector<Trade>& get_trades() const {
+        return trades_;
+    }
 };
 
 } // namespace winter::core

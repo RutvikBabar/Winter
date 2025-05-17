@@ -24,8 +24,10 @@ public:
     virtual void shutdown() {}
     
     // Accessors
-    const std::string& name() const { return name_; }
-    bool is_enabled() const { return enabled_; }
+    // Accessors can be constexpr
+    constexpr const std::string& name() const { return name_; }
+    constexpr bool is_enabled() const { return enabled_; }
+
     void set_enabled(bool enabled) { enabled_ = enabled; }
 };
 

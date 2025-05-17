@@ -18,7 +18,7 @@ private:
         // Use a raw pointer instead of atomic to avoid copy/move issues
         size_t next_free_index{0};
         
-        Block() : next_free_index(0) {
+        constexpr Block() : next_free_index(0) {
             for (auto& flag : used) {
                 flag = false;
             }
@@ -28,7 +28,7 @@ private:
     std::vector<std::unique_ptr<Block>> blocks;
     std::atomic<size_t> current_block{0};
     
-    void update_next_free_index(Block& block) {
+    constexpr void update_next_free_index(Block& block) {
         size_t idx = block.next_free_index;
         while (idx < BlockSize) {
             if (!block.used[idx]) {

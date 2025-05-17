@@ -23,7 +23,6 @@ struct Order {
     
     Order();
     Order(const std::string& sym, OrderSide s, int qty, double p);
-    
     double total_value() const;
 };
 

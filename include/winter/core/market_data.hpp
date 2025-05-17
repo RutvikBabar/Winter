@@ -11,6 +11,7 @@ struct MarketData {
     int64_t timestamp; // microseconds since epoch
     
     MarketData();
+
     MarketData(const std::string& sym, double p, int vol);
 };
 

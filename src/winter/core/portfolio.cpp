@@ -1,6 +1,7 @@
 #include <winter/core/portfolio.hpp>
 #include <winter/utils/logger.hpp>
 #include <algorithm>
+#include <ctime>
 
 namespace winter::core {
 
@@ -55,6 +56,24 @@ void Portfolio::add_position(const std::string& symbol, int quantity, double cos
         positions_[symbol] = pos;
     }
     
+    // Record the trade
+    Trade trade;
+    trade.symbol = symbol;
+    trade.side = "BUY";
+    trade.quantity = quantity;
+    trade.price = cost / quantity;
+    trade.cost = cost;
+    trade.profit = 0.0;
+    
+    // Get current time
+    std::time_t now = std::time(nullptr);
+    std::tm* tm = std::localtime(&now);
+    char time_buffer[20];
+    std::strftime(time_buffer, sizeof(time_buffer), "%H:%M:%S", tm);
+    trade.timestamp = time_buffer;
+    
+    trades_.push_back(trade);
+    
     // Increment trade count
     trade_count_++;
 }
@@ -64,19 +83,41 @@ void Portfolio::reduce_position(const std::string& symbol, int quantity) {
     if (it != positions_.end()) {
         // Calculate proportion of position being sold
         double proportion = static_cast<double>(quantity) / it->second.quantity;
+        double cost_basis = it->second.cost * proportion;
+        double avg_price = cost_basis / quantity;
+        
+        // Record the trade
+        Trade trade;
+        trade.symbol = symbol;
+        trade.side = "SELL";
+        trade.quantity = quantity;
+        trade.price = cash_ / quantity; // Use current cash as an approximation of sale price
+        trade.cost = cost_basis;
+        trade.profit = (trade.price * quantity) - cost_basis;
+        
+        // Get current time
+        std::time_t now = std::time(nullptr);
+        std::tm* tm = std::localtime(&now);
+        char time_buffer[20];
+        std::strftime(time_buffer, sizeof(time_buffer), "%H:%M:%S", tm);
+        trade.timestamp = time_buffer;
+        
+        trades_.push_back(trade);
         
         // Update position
         it->second.quantity -= quantity;
-        it->second.cost -= (it->second.cost * proportion);
+        it->second.cost -= cost_basis;
         
         // Remove position if quantity is zero
         if (it->second.quantity <= 0) {
             positions_.erase(it);
         }
-        
-        // Increment trade count
-        trade_count_++;
+    } else {
+        utils::Logger::warn() << "Insufficient position for order: " << symbol << utils::Logger::endl;
     }
+    
+    // Increment trade count
+    trade_count_++;
 }
 
 double Portfolio::total_value() const {

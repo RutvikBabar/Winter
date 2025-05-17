@@ -3,7 +3,12 @@
 #include <winter/core/market_data.hpp>
 #include <winter/utils/flamegraph.hpp>
 #include <winter/utils/logger.hpp>
-#include "strategies/mean_reversion_strategy.hpp" // Your strategy implementation
+#include "strategies/mean_reversion_strategy.hpp"
+// src/winter/core/signal.cpp
+#include <winter/core/signal.hpp>
+
+// No definitions needed here since they're inline in the header
+
 
 #include <iostream>
 #include <iomanip>
@@ -20,6 +25,12 @@
 #include <map>
 #include <zmq.hpp>
 #include <unordered_map>
+#include <deque>
+#include <algorithm>
+#include <execution>
+#include <mutex>
+#include <filesystem>
+#include <optional>
 
 // ANSI color codes for console output
 const std::string RESET = "\033[0m";
@@ -242,48 +253,124 @@ double calculate_z_score(const std::deque<double>& prices, double current_price)
     return (current_price - mean) / std_dev;
 }
 
-// Signal handler for strategy signals
-void handle_strategy_signal(const winter::core::Signal& signal, std::unordered_map<std::string, std::deque<double>>& price_history) {
-    // Update price history
-    if (price_history.find(signal.symbol) == price_history.end()) {
-        price_history[signal.symbol] = std::deque<double>();
+// Calculate market volatility for position unwinding
+double calculate_market_volatility(const std::vector<winter::core::MarketData>& historical_data,
+                                  size_t current_index,
+                                  size_t window_size = 100) {
+    
+    // Ensure we have enough data
+    if (current_index < window_size) {
+        return 0.01; // Default volatility if not enough data
     }
     
-    auto& prices = price_history[signal.symbol];
-    prices.push_back(signal.price);
+    // Group data by symbol
+    std::unordered_map<std::string, std::vector<double>> symbol_prices;
     
-    // Keep only the last 20 prices
-    if (prices.size() > 20) {
-        prices.pop_front();
+    // Collect recent prices for each symbol
+    for (size_t i = current_index - window_size; i < current_index; i++) {
+        const auto& data = historical_data[i];
+        symbol_prices[data.symbol].push_back(data.price);
     }
     
-    // Calculate Z-score
-    double z_score = calculate_z_score(prices, signal.price);
+    // Calculate volatility for each symbol
+    double total_volatility = 0.0;
+    int count = 0;
     
-    // Store Z-score for later use
-    last_z_scores[signal.symbol] = z_score;
+    for (const auto& [symbol, prices] : symbol_prices) {
+        if (prices.size() < 2) continue;
+        
+        // Calculate returns
+        std::vector<double> returns;
+        for (size_t i = 1; i < prices.size(); i++) {
+            double ret = (prices[i] / prices[i-1]) - 1.0;
+            returns.push_back(ret);
+        }
+        
+        // Calculate standard deviation of returns
+        double sum = std::accumulate(returns.begin(), returns.end(), 0.0);
+        double mean = sum / returns.size();
+        
+        double sq_sum = 0.0;
+        for (double ret : returns) {
+            sq_sum += (ret - mean) * (ret - mean);
+        }
+        
+        double std_dev = std::sqrt(sq_sum / returns.size());
+        
+        total_volatility += std_dev;
+        count++;
+    }
+    
+    // Return average volatility across symbols
+    return count > 0 ? total_volatility / count : 0.01;
 }
 
-int main(int argc, char* argv[]) {
-    // Register signal handler for Ctrl+C
-    std::signal(SIGINT, signal_handler);
+// Strategic Position Unwinding function
+void unwind_positions(std::unordered_map<std::string, PositionTracker>& positions, 
+                      double& cash,
+                      std::vector<TradeRecord>& trades,
+                      const std::unordered_map<std::string, double>& last_prices,
+                      int64_t timestamp,
+                      double market_volatility) {
     
-    // Register the strategy
-    auto strategy = winter::strategy::StrategyRegistry::create_and_register<MeanReversionStrategy>();
-
-    // Parse command line arguments
-    std::string socket_endpoint = "tcp://127.0.0.1:5555";
-    double initial_balance = 100000.0;
+    // Calculate market volatility factor (0-1 scale)
+    // Higher volatility = more aggressive unwinding
+    double volatility_factor = std::min(1.0, std::max(0.1, market_volatility / 0.02));
     
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--socket-endpoint" && i + 1 < argc) {
-            socket_endpoint = argv[++i];
-        } else if (arg == "--initial-balance" && i + 1 < argc) {
-            initial_balance = std::stod(argv[++i]);
+    // Process each open position
+    for (auto& [symbol, position] : positions) {
+        if (position.quantity <= 0) continue;
+        
+        // Get last known price for this symbol
+        double price = 0.0;
+        auto it = last_prices.find(symbol);
+        if (it != last_prices.end()) {
+            price = it->second;
+        } else {
+            // If no price available, skip this position
+            continue;
         }
+        
+        // Determine unwinding strategy based on position size and market volatility
+        int quantity = position.quantity;
+        double position_value = quantity * price;
+        
+        // Calculate unwinding discount based on position size and volatility
+        // Larger positions and higher volatility = larger discount
+        double size_factor = std::min(1.0, position_value / 100000.0); // Scale based on position size
+        double discount = 0.001 * (1.0 + size_factor * volatility_factor);
+        
+        // Apply discount to price for faster execution
+        double adjusted_price = price * (1.0 - discount);
+        
+        // Create unwinding trade record
+        TradeRecord record;
+        record.timestamp = std::to_string(timestamp);
+        record.symbol = symbol;
+        record.side = "SELL";
+        record.quantity = quantity;
+        record.price = adjusted_price;
+        record.value = quantity * adjusted_price;
+        
+        // Calculate profit/loss
+        double profit = position.calculate_profit(quantity, adjusted_price);
+        record.profit_loss = profit;
+        record.z_score = 0.0; // Not applicable for unwinding
+        
+        // Update cash
+        cash += record.value;
+        
+        // Reset position
+        double cost_basis = 0.0;
+        position.reduce_position(quantity, cost_basis);
+        
+        // Add trade record
+        trades.push_back(record);
     }
-    
+}
+
+// Run live trading mode
+void run_live_trading(const std::string& socket_endpoint, double initial_balance) {
     // Setup the engine
     winter::core::Engine engine;
     
@@ -291,7 +378,7 @@ int main(int argc, char* argv[]) {
     auto strategies = winter::strategy::StrategyRegistry::get_all_strategies();
     if (strategies.empty()) {
         std::cout << "No strategies found in registry. Please register strategies before running simulation." << std::endl;
-        return 1;
+        return;
     }
     
     for (const auto& strategy : strategies) {
@@ -401,7 +488,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Connected to market data socket" << std::endl;
     } catch (const zmq::error_t& e) {
         std::cerr << "Failed to connect to market data socket: " << e.what() << std::endl;
-        return 1;
+        return;
     }
     
     // Start the flamegraph profiling
@@ -416,7 +503,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Waiting for market data from socket..." << std::endl;
     
     // Main simulation loop
-    auto start_time = std::chrono::system_clock::now();
+    auto start_time = std::chrono::high_resolution_clock::now();
     int trade_count = 0;
     int data_count = 0;
     
@@ -485,6 +572,695 @@ int main(int argc, char* argv[]) {
     
     // Export trades to CSV
     export_trades_to_csv(trade_records, initial_balance, final_balance);
+}
+
+// Optimized direct backtesting implementation with Strategic Position Unwinding
+void run_backtest(const std::string& csv_file, double initial_balance) {
+    std::cout << CYAN << "Starting optimized backtest with data from: " << csv_file << RESET << std::endl;
+    
+    auto start_time = std::chrono::high_resolution_clock::now();
+    
+    // Load and parse CSV data directly
+    std::vector<winter::core::MarketData> historical_data;
+    
+    // Check if file exists
+    if (!std::filesystem::exists(csv_file)) {
+        std::cout << RED << "CSV file does not exist: " << csv_file << RESET << std::endl;
+        return;
+    }
+    
+    std::ifstream file(csv_file);
+    if (!file.is_open()) {
+        std::cout << RED << "Failed to open CSV file: " << csv_file << RESET << std::endl;
+        return;
+    }
+    
+    std::cout << CYAN << "Reading CSV file..." << RESET << std::endl;
+    
+    // Read header line
+    std::string line;
+    std::getline(file, line);
+    
+    // Read all lines
+    std::vector<std::string> lines;
+    while (std::getline(file, line)) {
+        lines.push_back(line);
+    }
+    file.close();
+    
+    std::cout << CYAN << "Read " << lines.size() << " lines from CSV file" << RESET << std::endl;
+    std::cout << CYAN << "Parsing CSV data in parallel..." << RESET << std::endl;
+    
+    // Reserve space for data
+    historical_data.reserve(lines.size());
+    
+    // Parse lines in batches to avoid memory issues
+    constexpr size_t BATCH_SIZE = 100000;
+    for (size_t batch_start = 0; batch_start < lines.size(); batch_start += BATCH_SIZE) {
+        size_t batch_end = std::min(batch_start + BATCH_SIZE, lines.size());
+        size_t batch_size = batch_end - batch_start;
+        
+        std::vector<std::optional<winter::core::MarketData>> batch_results(batch_size);
+        
+        // Parse batch in parallel
+        std::transform(
+            std::execution::par_unseq,
+            lines.begin() + batch_start,
+            lines.begin() + batch_end,
+            batch_results.begin(),
+            [&](const std::string& line) -> std::optional<winter::core::MarketData> {
+                std::stringstream ss(line);
+                std::string time, symbol, market_center, price_str, size_str;
+                std::string cum_bats_vol, cum_sip_vol, sip_complete, last_sale;
+                
+                // Parse CSV columns
+                std::getline(ss, time, ',');
+                std::getline(ss, symbol, ',');
+                std::getline(ss, market_center, ',');
+                std::getline(ss, price_str, ',');
+                std::getline(ss, size_str, ',');
+                std::getline(ss, cum_bats_vol, ',');
+                std::getline(ss, cum_sip_vol, ',');
+                std::getline(ss, sip_complete, ',');
+                std::getline(ss, last_sale, ',');
+                
+                if (time.empty() || symbol.empty() || price_str.empty() || size_str.empty()) {
+                    return std::nullopt;
+                }
+                
+                try {
+                    double price = std::stod(price_str);
+                    int volume = std::stoi(size_str);
+                    
+                    winter::core::MarketData data;
+                    data.symbol = symbol;
+                    data.price = price;
+                    data.volume = volume;
+                    data.timestamp = 0; // Will be set later
+                    
+                    return data;
+                } catch (const std::exception& e) {
+                    return std::nullopt;
+                }
+            }
+        );
+        
+        // Add valid results to historical_data
+        for (auto& result : batch_results) {
+            if (result) {
+                historical_data.push_back(*result);
+            }
+        }
+        
+        // Report progress
+        double progress = static_cast<double>(batch_end) / lines.size() * 100.0;
+        std::cout << CYAN << "Parsing progress: " << std::fixed << std::setprecision(1) 
+                 << progress << "% (" << historical_data.size() << " valid data points)" << RESET << std::endl;
+    }
+    
+    // Set sequential timestamps
+    for (size_t i = 0; i < historical_data.size(); i++) {
+        historical_data[i].timestamp = i;
+    }
+    
+    // Sort data by timestamp
+    std::cout << CYAN << "Sorting data by timestamp..." << RESET << std::endl;
+    std::sort(std::execution::par_unseq, historical_data.begin(), historical_data.end(),
+             [](const winter::core::MarketData& a, const winter::core::MarketData& b) {
+                 return a.timestamp < b.timestamp;
+             });
+    
+    std::cout << CYAN << "Loaded " << historical_data.size() << " data points from " 
+             << lines.size() << " total lines in " << csv_file << RESET << std::endl;
+    
+    // Get strategies from registry
+    auto strategies = winter::strategy::StrategyRegistry::get_all_strategies();
+    if (strategies.empty()) {
+        std::cout << "No strategies found in registry. Please register strategies before running backtest." << std::endl;
+        return;
+    }
+    
+    std::cout << "Using strategy: " << strategies[0]->name() << std::endl;
+    
+    // Initialize portfolio and tracking variables
+    double cash = initial_balance;
+    std::unordered_map<std::string, PositionTracker> positions;
+    std::vector<TradeRecord> trades;
+    std::unordered_map<std::string, std::deque<double>> price_history;
+    std::unordered_map<std::string, double> last_prices;
+    
+    // Setup progress reporting
+    std::cout << YELLOW << "Running backtest..." << RESET << std::endl;
+    
+    std::atomic<size_t> processed_count(0);
+    std::atomic<bool> running(true);
+    
+    std::thread progress_thread([&]() {
+        while (running && processed_count < historical_data.size()) {
+            double progress = static_cast<double>(processed_count) / historical_data.size() * 100.0;
+            std::cout << "\rProgress: " << std::fixed << std::setprecision(1) << progress << "%" << std::flush;
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        std::cout << "\rProgress: 100.0%" << std::endl;
+    });
+    
+    // Process data in parallel chunks
+    constexpr size_t num_threads = 12; // Adjust based on your CPU
+    constexpr size_t chunk_size = 10000;
+    
+    // Create a vector of vectors to store trades from each thread
+    std::vector<std::vector<TradeRecord>> thread_trades(num_threads);
+    std::vector<PositionTracker> thread_positions(num_threads);
+    std::vector<double> thread_cash(num_threads, initial_balance / num_threads);
+    
+    // Track trading days for end-of-day unwinding
+    std::string current_day = "";
+    
+    // Process data in parallel
+    #pragma omp parallel for num_threads(num_threads)
+    for (size_t thread_id = 0; thread_id < num_threads; thread_id++) {
+        // Calculate chunk for this thread
+        size_t start = (historical_data.size() / num_threads) * thread_id;
+        size_t end = (thread_id == num_threads - 1) ? 
+                    historical_data.size() : 
+                    (historical_data.size() / num_threads) * (thread_id + 1);
+        
+        // Local price history for this thread
+        std::unordered_map<std::string, std::deque<double>> local_price_history;
+        
+        // Local position trackers
+        std::unordered_map<std::string, PositionTracker> local_positions;
+        
+        // Local last prices
+        std::unordered_map<std::string, double> local_last_prices;
+        
+        // Local current day
+        std::string local_current_day = "";
+        
+        // Process data in this thread's chunk
+        for (size_t i = start; i < end; i++) {
+            const auto& data = historical_data[i];
+            
+            // Update last known price for each symbol
+            local_last_prices[data.symbol] = data.price;
+            
+            // Extract day from timestamp (in real implementation, parse from actual timestamp)
+            std::string day = std::to_string(data.timestamp / 1000000); // Simplified
+            
+            // Check if day has changed - end of trading day
+            if (day != local_current_day && !local_current_day.empty()) {
+                // Calculate market volatility
+                double volatility = calculate_market_volatility(historical_data, i);
+                
+                // Unwind positions at end of day
+                unwind_positions(local_positions, thread_cash[thread_id], thread_trades[thread_id], 
+                                local_last_prices, data.timestamp, volatility);
+            }
+            
+            local_current_day = day;
+            
+            // Update price history
+            if (local_price_history.find(data.symbol) == local_price_history.end()) {
+                local_price_history[data.symbol] = std::deque<double>();
+            }
+            
+            auto& prices = local_price_history[data.symbol];
+            prices.push_back(data.price);
+            
+            // Keep only the last 20 prices
+            if (prices.size() > 20) {
+                prices.pop_front();
+            }
+            
+            // Skip if we don't have enough price history
+            if (prices.size() < 20) {
+                processed_count++;
+                continue;
+            }
+            
+            // Calculate z-score
+            double z_score = calculate_z_score(prices, data.price);
+            
+            // Generate signals based on z-score
+            if (z_score < -2.0) {
+                // Buy signal
+                double max_position = thread_cash[thread_id] * 0.01; // Use 1% of cash per position
+                int quantity = static_cast<int>(max_position / data.price);
+                
+                if (quantity > 0 && thread_cash[thread_id] >= quantity * data.price) {
+                    double cost = quantity * data.price;
+                    
+                    // Update cash
+                    thread_cash[thread_id] -= cost;
+                    
+                    // Update position tracker
+                    if (local_positions.find(data.symbol) == local_positions.end()) {
+                        local_positions[data.symbol] = PositionTracker();
+                    }
+                    local_positions[data.symbol].add_position(quantity, cost);
+                    
+                    // Format timestamp
+                    std::string timestamp = std::to_string(data.timestamp);
+                    
+                    // Record trade
+                    TradeRecord record;
+                    record.timestamp = timestamp;
+                    record.symbol = data.symbol;
+                    record.side = "BUY";
+                    record.quantity = quantity;
+                    record.price = data.price;
+                    record.value = cost;
+                    record.profit_loss = 0.0;
+                    record.z_score = z_score;
+                    
+                    thread_trades[thread_id].push_back(record);
+                }
+            }
+            else if (z_score > 2.0) {
+                // Sell signal
+                auto it = local_positions.find(data.symbol);
+                if (it != local_positions.end() && it->second.quantity > 0) {
+                    int quantity = it->second.quantity;
+                    double proceeds = quantity * data.price;
+                    
+                    // Calculate profit/loss
+                    double profit = it->second.calculate_profit(quantity, data.price);
+                    
+                    // Update cash
+                    thread_cash[thread_id] += proceeds;
+                    
+                    // Update position tracker
+                    double cost_basis = 0.0;
+                    it->second.reduce_position(quantity, cost_basis);
+                    
+                    // Format timestamp
+                    std::string timestamp = std::to_string(data.timestamp);
+                    
+                    // Record trade
+                    TradeRecord record;
+                    record.timestamp = timestamp;
+                    record.symbol = data.symbol;
+                    record.side = "SELL";
+                    record.quantity = quantity;
+                    record.price = data.price;
+                    record.value = proceeds;
+                    record.profit_loss = profit;
+                    record.z_score = z_score;
+                    
+                    thread_trades[thread_id].push_back(record);
+                }
+            }
+            
+            processed_count++;
+        }
+        
+        // Ensure we unwind any remaining positions at the end of the thread's chunk
+        double volatility = calculate_market_volatility(historical_data, end - 1);
+        unwind_positions(local_positions, thread_cash[thread_id], thread_trades[thread_id], 
+                        local_last_prices, historical_data[end - 1].timestamp, volatility);
+    }
+    
+    // Stop progress thread
+    running = false;
+    if (progress_thread.joinable()) {
+        progress_thread.join();
+    }
+    
+    // Combine results from all threads
+    double final_cash = 0.0;
+    for (size_t i = 0; i < num_threads; i++) {
+        final_cash += thread_cash[i];
+        trades.insert(trades.end(), thread_trades[i].begin(), thread_trades[i].end());
+    }
+    
+    // Sort trades by timestamp
+    std::sort(trades.begin(), trades.end(), [](const TradeRecord& a, const TradeRecord& b) {
+        return std::stoi(a.timestamp) < std::stoi(b.timestamp);
+    });
+    
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+    
+    // Calculate performance metrics
+    double final_balance = final_cash;
+    double total_return = final_balance - initial_balance;
+    double total_return_pct = (total_return / initial_balance) * 100.0;
+    
+    // Count winning and losing trades
+    int winning_trades = 0;
+    int losing_trades = 0;
+    double total_profit = 0.0;
+    double total_loss = 0.0;
+    
+    for (const auto& trade : trades) {
+        if (trade.side == "SELL") {
+            if (trade.profit_loss > 0) {
+                winning_trades++;
+                total_profit += trade.profit_loss;
+            } else {
+                losing_trades++;
+                total_loss += std::abs(trade.profit_loss);
+            }
+        }
+    }
+    
+    double win_rate = (winning_trades + losing_trades > 0) ? 
+        static_cast<double>(winning_trades) / (winning_trades + losing_trades) * 100.0 : 0.0;
+    
+    double profit_factor = (total_loss > 0) ? total_profit / total_loss : 0.0;
+    
+    // Calculate Sharpe ratio (simplified)
+    double sharpe_ratio = 0.0;
+    if (trades.size() > 0) {
+        std::vector<double> returns;
+        double prev_equity = initial_balance;
+        double equity = initial_balance;
+        
+        for (const auto& trade : trades) {
+            if (trade.side == "BUY") {
+                equity -= trade.value;
+            } else {
+                equity += trade.value;
+            }
+            
+            // Calculate return for this trade
+            double ret = (equity - prev_equity) / prev_equity;
+            returns.push_back(ret);
+            prev_equity = equity;
+        }
+        
+        // Calculate average return
+        double avg_return = std::accumulate(returns.begin(), returns.end(), 0.0) / returns.size();
+        
+        // Calculate standard deviation
+        double sum_sq_diff = 0.0;
+        for (double ret : returns) {
+            double diff = ret - avg_return;
+            sum_sq_diff += diff * diff;
+        }
+        double std_dev = std::sqrt(sum_sq_diff / returns.size());
+        
+        // Calculate Sharpe ratio (assuming 0 risk-free rate)
+        if (std_dev > 0) {
+            sharpe_ratio = (avg_return / std_dev) * std::sqrt(252.0); // Annualized
+        }
+    }
+    
+    // Calculate max drawdown
+    double max_drawdown = 0.0;
+    double peak = initial_balance;
+    double equity = initial_balance;
+    
+    for (const auto& trade : trades) {
+        if (trade.side == "BUY") {
+            equity -= trade.value;
+        } else {
+            equity += trade.value;
+        }
+        
+        if (equity > peak) {
+            peak = equity;
+        }
+        
+        double drawdown = peak - equity;
+        if (drawdown > max_drawdown) {
+            max_drawdown = drawdown;
+        }
+    }
+    
+    double max_drawdown_pct = (max_drawdown / initial_balance) * 100.0;
+    
+    // Print results
+    std::cout << "\n" << CYAN << "=== Backtest Results ===" << RESET << std::endl;
+    std::cout << "Initial Capital: $" << std::fixed << std::setprecision(2) << initial_balance << std::endl;
+    std::cout << "Final Capital:   $" << std::fixed << std::setprecision(2) << final_balance << std::endl;
+    
+    if (total_return >= 0) {
+        std::cout << GREEN << "Total Return:    $" << std::fixed << std::setprecision(2) << total_return 
+                  << " (" << std::setprecision(2) << total_return_pct << "%)" << RESET << std::endl;
+    } else {
+        std::cout << RED << "Total Return:    $" << std::fixed << std::setprecision(2) << total_return 
+                  << " (" << std::setprecision(2) << total_return_pct << "%)" << RESET << std::endl;
+    }
+    
+    std::cout << "Sharpe Ratio:      " << std::fixed << std::setprecision(2) << sharpe_ratio << std::endl;
+    std::cout << "Max Drawdown:      " << std::fixed << std::setprecision(2) << max_drawdown_pct << "%" << std::endl;
+    std::cout << "Total Trades:      " << trades.size() << std::endl;
+    std::cout << "Winning Trades:    " << winning_trades << std::endl;
+    std::cout << "Losing Trades:     " << losing_trades << std::endl;
+    std::cout << "Win Rate:          " << std::fixed << std::setprecision(2) << win_rate << "%" << std::endl;
+    std::cout << "Profit Factor:     " << std::fixed << std::setprecision(2) << profit_factor << std::endl;
+    std::cout << "Backtest Duration: " << duration << "ms" << std::endl;
+    
+    // Generate HTML report with Chart.js
+    std::ofstream html_file("backtest_report.html");
+    if (html_file.is_open()) {
+        // Generate equity curve data
+        std::vector<double> equity_curve;
+        equity_curve.push_back(initial_balance);
+        
+        double equity = initial_balance;
+        for (const auto& trade : trades) {
+            if (trade.side == "BUY") {
+                equity -= trade.value;
+            } else if (trade.side == "SELL") {
+                equity += trade.value;
+            }
+            equity_curve.push_back(equity);
+        }
+        
+        // Generate JSON for chart
+        std::stringstream equity_json;
+        equity_json << "[";
+        for (size_t i = 0; i < equity_curve.size(); i++) {
+            if (i > 0) equity_json << ",";
+            equity_json << equity_curve[i];
+        }
+        equity_json << "]";
+        
+        std::stringstream labels_json;
+        labels_json << "[";
+        for (size_t i = 0; i < equity_curve.size(); i++) {
+            if (i > 0) labels_json << ",";
+            labels_json << "\"" << i << "\"";
+        }
+        labels_json << "]";
+        
+        // Write HTML with embedded Chart.js using raw string literals
+        html_file << R"(
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Winter Backtest Results</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .chart-container {
+            height: 400px;
+            margin-bottom: 30px;
+        }
+        .metrics-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+        }
+        .metric-box {
+            width: 30%;
+            margin-bottom: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+            box-shadow: 0 0 5px rgba(0,0,0,0.05);
+        }
+        .metric-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        .metric-value {
+            font-size: 20px;
+            color: #0066cc;
+        }
+        .positive {
+            color: #00aa00;
+        }
+        .negative {
+            color: #cc0000;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Winter Backtest Results</h1>
+            <p>Optimized Backtesting Report with Strategic Position Unwinding</p>
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="equityChart"></canvas>
+        </div>
+        
+        <div class="metrics-container">
+            <div class="metric-box">
+                <div class="metric-title">Initial Capital</div>
+                <div class="metric-value">$)" << std::fixed << std::setprecision(2) << initial_balance << R"(</div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-title">Final Capital</div>
+                <div class="metric-value">$)" << std::fixed << std::setprecision(2) << final_balance << R"(</div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-title">Total Return</div>
+                <div class="metric-value )" << (total_return >= 0 ? "positive" : "negative") << R"(">
+                    $)" << std::fixed << std::setprecision(2) << total_return << 
+                    " (" << std::setprecision(2) << total_return_pct << R"(%)
+                </div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-title">Sharpe Ratio</div>
+                <div class="metric-value">)" << std::fixed << std::setprecision(2) << sharpe_ratio << R"(</div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-title">Max Drawdown</div>
+                <div class="metric-value negative">
+                    $)" << std::fixed << std::setprecision(2) << max_drawdown << 
+                    " (" << std::setprecision(2) << max_drawdown_pct << R"(%)
+                </div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-title">Total Trades</div>
+                <div class="metric-value">)" << trades.size() << R"(</div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-title">Win Rate</div>
+                <div class="metric-value">)" << std::fixed << std::setprecision(2) << win_rate << R"(%</div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-title">Profit Factor</div>
+                <div class="metric-value">)" << std::fixed << std::setprecision(2) << profit_factor << R"(</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ctx = document.getElementById("equityChart").getContext("2d");
+        const equityChart = new Chart(ctx, {
+            type: "line",
+            data: {
+                labels: )" << labels_json.str() << R"(,
+                datasets: [{
+                    label: "Equity Curve",
+                    data: )" << equity_json.str() << R"(,
+                    borderColor: "#0066cc",
+                    backgroundColor: 'rgba(0, 102, 204, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: "Equity Curve"
+                    },
+                    tooltip: {
+                        mode: "index",
+                        intersect: false,
+                        callbacks: {
+                            label: function(context) {
+                                return "Equity: $" + context.raw.toFixed(2);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        title: {
+                            display: true,
+                            text: 'Equity ($)'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: "Trade #"
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
+)";
+        
+        html_file.close();
+        std::cout << GREEN << "Generated HTML report: backtest_report.html" << RESET << std::endl;
+    }
+    
+    // Export trades to CSV
+    export_trades_to_csv(trades, initial_balance, final_balance);
+}
+
+int main(int argc, char* argv[]) {
+    // Register signal handler for Ctrl+C
+    std::signal(SIGINT, signal_handler);
+    
+    // Register the strategy
+    auto strategy = winter::strategy::StrategyRegistry::create_and_register<MeanReversionStrategy>();
+
+    // Parse command line arguments
+    std::string socket_endpoint = "tcp://127.0.0.1:5555";
+    double initial_balance = 100000.0;
+    bool backtest_mode = false;
+    std::string csv_file;
+    
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--socket-endpoint" && i + 1 < argc) {
+            socket_endpoint = argv[++i];
+        } else if (arg == "--initial-balance" && i + 1 < argc) {
+            initial_balance = std::stod(argv[++i]);
+        } else if (arg == "--backtest" && i + 1 < argc) {
+            backtest_mode = true;
+            csv_file = argv[++i];
+        } else if (arg == "--help") {
+            std::cout << "Usage: " << argv[0] << " [options]" << std::endl;
+            std::cout << "Options:" << std::endl;
+            std::cout << "  --socket-endpoint <endpoint>  ZMQ socket endpoint (default: tcp://127.0.0.1:5555)" << std::endl;
+            std::cout << "  --initial-balance <amount>    Initial balance (default: 1000000.0)" << std::endl;
+            std::cout << "  --backtest <csv_file>         Run in backtest mode using historical data from CSV" << std::endl;
+            std::cout << "  --help                        Show this help message" << std::endl;
+            return 0;
+        }
+    }
+    
+    // Run in appropriate mode
+    if (backtest_mode) {
+        run_backtest(csv_file, initial_balance);
+    } else {
+        run_live_trading(socket_endpoint, initial_balance);
+    }
     
     return 0;
 }

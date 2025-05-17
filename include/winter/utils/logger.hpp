@@ -16,7 +16,7 @@ enum class LogLevel {
 class Logger {
 public:
     struct EndlType {};
-    static const EndlType endl;
+    inline static constexpr EndlType endl{};  // Declare and initialize with inline
 
     static Logger& debug();
     static Logger& info();
@@ -24,7 +24,7 @@ public:
     static Logger& error();
 
     template<typename T>
-    Logger& operator<<(const T& value) {
+    constexpr Logger& operator<<(const T& value) {
         stream_ << value;
         return *this;
     }
