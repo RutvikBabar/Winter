@@ -23,6 +23,12 @@ void StrategyRegistry::register_strategy(StrategyPtr strategy) {
     }
 }
 
+// In src/winter/strategy/strategy_registry.cpp
+void StrategyRegistry::clear() {
+    // Use the correct method to access strategies
+    get_all_strategies().clear();
+}
+
 void StrategyRegistry::unregister_strategy(const std::string& name) {
     auto it = std::find_if(strategies_.begin(), strategies_.end(),
         [&name](const StrategyPtr& s) {
@@ -55,9 +61,9 @@ std::vector<StrategyPtr> StrategyRegistry::get_all_strategies() {
     return strategies_;
 }
 
-void StrategyRegistry::clear() {
-    strategies_.clear();
-    utils::Logger::info() << "Cleared all registered strategies" << utils::Logger::endl;
-}
+// void StrategyRegistry::clear() {
+//     strategies_.clear();
+//     utils::Logger::info() << "Cleared all registered strategies" << utils::Logger::endl;
+// }
 
 } // namespace winter::strategy

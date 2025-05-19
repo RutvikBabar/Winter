@@ -2,7 +2,7 @@
 CXX = g++
 CXXFLAGS = -std=c++20 -O3 -march=native -mtune=native -ffast-math -funroll-loops
 INCLUDES = -I./include -I.
-LDFLAGS = -pthread -lzmq
+LDFLAGS = -pthread -lzmq -Wl,--subsystem,console
 
 # Source directories
 SRC_DIR = src/winter
@@ -83,4 +83,8 @@ run: $(SIMULATE_EXE)
 backtest: $(SIMULATE_EXE)
 	./$(SIMULATE_EXE) --backtest historical_data.csv
 
-.PHONY: all directories clean run backtest
+# Run trade simulation
+trade: $(SIMULATE_EXE)
+	./$(SIMULATE_EXE) --trade 2021_Market_Data_RAW.csv
+
+.PHONY: all directories clean run backtest trade
