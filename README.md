@@ -272,17 +272,17 @@ Follow these step-by-step instructions to create and register your own trading s
 ## Step 1: Create Strategy Header File
 
 Create a new header file in the `strategies/` directory (e.g., `strategies/my_custom_strategy.hpp`):
-
-#pragma once
-#include <winter/strategy/strategy_base.hpp>
-#include <winter/strategy/strategy_factory.hpp>
-#include <winter/core/signal.hpp>
-#include <winter/core/market_data.hpp>
-#include <deque>
-#include <unordered_map>
-#include <cmath>
-#include <algorithm>
-#include <numeric>
+    
+    #pragma once
+    #include <winter/strategy/strategy_base.hpp>
+    #include <winter/strategy/strategy_factory.hpp>
+    #include <winter/core/signal.hpp>
+    #include <winter/core/market_data.hpp>
+    #include <deque>
+    #include <unordered_map>
+    #include <cmath>
+    #include <algorithm>
+    #include <numeric>
 
 
     
