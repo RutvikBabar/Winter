@@ -4,6 +4,9 @@
 #include <winter/utils/flamegraph.hpp>
 #include <winter/utils/logger.hpp>
 #include "strategies/stat_arbitrage.hpp"
+#include <winter/strategy/strategy_factory.hpp>
+
+#include "strategies/mean_reversion_strategy.hpp"  
 
 #include <iostream>
 #include <iomanip>
@@ -89,6 +92,45 @@ std::atomic<bool> g_running = true;
 std::vector<TradeRecord> trade_records;
 std::unordered_map<std::string, double> last_z_scores; // Store last Z-score for each symbol
 std::unordered_map<std::string, PositionTracker> position_trackers; // Track positions and costs
+// Function to parse strategy configuration file
+std::unordered_map<std::string, std::string> parse_strategy_config(const std::string& filename) {
+    std::unordered_map<std::string, std::string> config_map;
+    std::ifstream file(filename);
+    
+    if (!file.is_open()) {
+        std::cerr << RED << "Could not open configuration file: " << filename << RESET << std::endl;
+        return config_map;
+    }
+    
+    std::string line;
+    while (std::getline(file, line)) {
+        // Skip empty lines and comments
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        
+        // Parse key=value or key:value
+        size_t pos = line.find('=');
+        if (pos == std::string::npos) {
+            pos = line.find(':');
+        }
+        
+        if (pos != std::string::npos) {
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
+            
+            // Trim whitespace and quotes
+            key.erase(0, key.find_first_not_of(" \t\""));
+            key.erase(key.find_last_not_of(" \t\"") + 1);
+            value.erase(0, value.find_first_not_of(" \t\""));
+            value.erase(value.find_last_not_of(" \t\"") + 1);
+            
+            config_map[key] = value;
+        }
+    }
+    
+    return config_map;
+}
 
 void signal_handler(int signal) {
     g_running = false;
@@ -249,21 +291,22 @@ double calculate_z_score(const std::deque<double>& prices, double current_price)
 }
 
 // Run live trading mode
-void run_live_trading(const std::string& socket_endpoint, double initial_balance) {
+void run_live_trading(const std::string& socket_endpoint, double initial_balance, const std::string& strategy_name) {
     // Setup the engine
     winter::core::Engine engine;
     
     // Load strategies from registry
-    auto strategies = winter::strategy::StrategyRegistry::get_all_strategies();
-    if (strategies.empty()) {
-        std::cout << "No strategies found in registry. Please register strategies before running simulation." << std::endl;
+    auto strategy = winter::strategy::StrategyFactory::create_strategy(strategy_name);
+    if (!strategy) {
+        std::cout << RED << "Strategy not found: " << strategy_name << RESET << std::endl;
         return;
     }
     
-    for (const auto& strategy : strategies) {
-        engine.add_strategy(strategy);
-        std::cout << "Loaded strategy: " << strategy->name() << std::endl;
-    }
+
+    engine.add_strategy(strategy);
+    std::cout << "Using strategy: " << strategy->name() << std::endl;
+    
+
     
     // Initialize portfolio
     engine.portfolio().set_cash(initial_balance);
@@ -454,7 +497,7 @@ void run_live_trading(const std::string& socket_endpoint, double initial_balance
 }
 
 // Optimized direct backtesting implementation
-void run_backtest(const std::string& csv_file, double initial_balance) {
+void run_backtest(const std::string& csv_file, double initial_balance, const std::string& strategy_name) {
     std::cout << CYAN << "Starting optimized backtest with data from: " << csv_file << RESET << std::endl;
     
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -573,13 +616,13 @@ void run_backtest(const std::string& csv_file, double initial_balance) {
              << lines.size() << " total lines in " << csv_file << RESET << std::endl;
     
     // Get strategies from registry
-    auto strategies = winter::strategy::StrategyRegistry::get_all_strategies();
-    if (strategies.empty()) {
-        std::cout << "No strategies found in registry. Please register strategies before running backtest." << std::endl;
+    auto strategy = winter::strategy::StrategyFactory::create_strategy(strategy_name);
+    if (!strategy) {
+        std::cout << RED << "Strategy not found: " << strategy_name << RESET << std::endl;
         return;
     }
     
-    std::cout << "Using strategy: " << strategies[0]->name() << std::endl;
+    std::cout << "Using strategy: " << strategy->name() << std::endl;
     
     // Initialize portfolio and tracking variables
     double cash = initial_balance;
@@ -611,81 +654,81 @@ void run_backtest(const std::string& csv_file, double initial_balance) {
         last_prices[data.symbol] = data.price;
         
         // Process each data point with all strategies
-        for (const auto& strategy : strategies) {
-            // Generate signals for this data point
-            std::vector<winter::core::Signal> signals = strategy->process_tick(data);
-            
-            // Process signals
-            for (const auto& signal : signals) {
-                if (signal.type == winter::core::SignalType::BUY) {
-                    // Calculate position size (1% of capital)
-                    double max_position = cash * 0.01;
-                    int quantity = static_cast<int>(max_position / signal.price);
+        
+        // Generate signals for this data point
+        std::vector<winter::core::Signal> signals = strategy->process_tick(data);
+        
+        // Process signals
+        for (const auto& signal : signals) {
+            if (signal.type == winter::core::SignalType::BUY) {
+                // Calculate position size (1% of capital)
+                double max_position = cash * 0.01;
+                int quantity = static_cast<int>(max_position / signal.price);
+                
+                if (quantity > 0 && cash >= quantity * signal.price) {
+                    double cost = quantity * signal.price;
                     
-                    if (quantity > 0 && cash >= quantity * signal.price) {
-                        double cost = quantity * signal.price;
-                        
-                        // Update cash
-                        cash -= cost;
-                        
-                        // Update position tracker
-                        if (positions.find(signal.symbol) == positions.end()) {
-                            positions[signal.symbol] = PositionTracker();
-                        }
-                        positions[signal.symbol].add_position(quantity, cost);
-                        
-                        // Format timestamp
-                        std::string timestamp = std::to_string(data.timestamp);
-                        
-                        // Record trade
-                        TradeRecord record;
-                        record.timestamp = timestamp;
-                        record.symbol = signal.symbol;
-                        record.side = "BUY";
-                        record.quantity = quantity;
-                        record.price = signal.price;
-                        record.value = cost;
-                        record.profit_loss = 0.0;
-                        record.z_score = last_z_scores.count(signal.symbol) ? last_z_scores[signal.symbol] : 0.0; // Not using z-score for stat arb
-                        
-                        trades.push_back(record);
+                    // Update cash
+                    cash -= cost;
+                    
+                    // Update position tracker
+                    if (positions.find(signal.symbol) == positions.end()) {
+                        positions[signal.symbol] = PositionTracker();
                     }
+                    positions[signal.symbol].add_position(quantity, cost);
+                    
+                    // Format timestamp
+                    std::string timestamp = std::to_string(data.timestamp);
+                    
+                    // Record trade
+                    TradeRecord record;
+                    record.timestamp = timestamp;
+                    record.symbol = signal.symbol;
+                    record.side = "BUY";
+                    record.quantity = quantity;
+                    record.price = signal.price;
+                    record.value = cost;
+                    record.profit_loss = 0.0;
+                    record.z_score = last_z_scores.count(signal.symbol) ? last_z_scores[signal.symbol] : 0.0; // Not using z-score for stat arb
+                    
+                    trades.push_back(record);
                 }
-                else if (signal.type == winter::core::SignalType::SELL) {
-                    auto it = positions.find(signal.symbol);
-                    if (it != positions.end() && it->second.quantity > 0) {
-                        int quantity = it->second.quantity;
-                        double proceeds = quantity * signal.price;
-                        
-                        // Calculate profit/loss
-                        double profit = it->second.calculate_profit(quantity, signal.price);
-                        
-                        // Update cash
-                        cash += proceeds;
-                        
-                        // Update position tracker
-                        double cost_basis = 0.0;
-                        it->second.reduce_position(quantity, cost_basis);
-                        
-                        // Format timestamp
-                        std::string timestamp = std::to_string(data.timestamp);
-                        
-                        // Record trade
-                        TradeRecord record;
-                        record.timestamp = timestamp;
-                        record.symbol = signal.symbol;
-                        record.side = "SELL";
-                        record.quantity = quantity;
-                        record.price = signal.price;
-                        record.value = proceeds;
-                        record.profit_loss = profit;
-                        record.z_score = last_z_scores.count(signal.symbol) ? last_z_scores[signal.symbol] : 0.0; // Not using z-score for stat arb
-                        
-                        trades.push_back(record);
-                    }
+            }
+            else if (signal.type == winter::core::SignalType::SELL) {
+                auto it = positions.find(signal.symbol);
+                if (it != positions.end() && it->second.quantity > 0) {
+                    int quantity = it->second.quantity;
+                    double proceeds = quantity * signal.price;
+                    
+                    // Calculate profit/loss
+                    double profit = it->second.calculate_profit(quantity, signal.price);
+                    
+                    // Update cash
+                    cash += proceeds;
+                    
+                    // Update position tracker
+                    double cost_basis = 0.0;
+                    it->second.reduce_position(quantity, cost_basis);
+                    
+                    // Format timestamp
+                    std::string timestamp = std::to_string(data.timestamp);
+                    
+                    // Record trade
+                    TradeRecord record;
+                    record.timestamp = timestamp;
+                    record.symbol = signal.symbol;
+                    record.side = "SELL";
+                    record.quantity = quantity;
+                    record.price = signal.price;
+                    record.value = proceeds;
+                    record.profit_loss = profit;
+                    record.z_score = last_z_scores.count(signal.symbol) ? last_z_scores[signal.symbol] : 0.0; // Not using z-score for stat arb
+                    
+                    trades.push_back(record);
                 }
             }
         }
+    
         
         processed_count++;
     }
@@ -1036,7 +1079,7 @@ void run_backtest(const std::string& csv_file, double initial_balance) {
 void generate_trade_graphs(const std::vector<TradeRecord>& trades, double initial_balance, double final_balance);
 
 
-void run_trade_simulation(const std::string& csv_file, double initial_balance) {
+void run_trade_simulation(const std::string& csv_file, double initial_balance, const std::string& strategy_name) {
     std::cout << CYAN << "Starting trade simulation with data from: " << csv_file << RESET << std::endl;
     
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -1161,16 +1204,17 @@ void run_trade_simulation(const std::string& csv_file, double initial_balance) {
     winter::core::Engine engine;
     
     // Get strategies from registry
-    auto strategies = winter::strategy::StrategyRegistry::get_all_strategies();
-    if (strategies.empty()) {
-        std::cout << "No strategies found in registry. Please register strategies before running trade simulation." << std::endl;
+    auto strategy = winter::strategy::StrategyFactory::create_strategy(strategy_name);
+    if (!strategy) {
+        std::cout << RED << "Strategy not found: " << strategy_name << RESET << std::endl;
         return;
     }
     
-    for (const auto& strategy : strategies) {
-        engine.add_strategy(strategy);
-        std::cout << "Using strategy: " << strategy->name() << std::endl;
-    }
+
+    engine.add_strategy(strategy);
+    std::cout << "Using strategy: " << strategy->name() << std::endl;
+    
+
     
     // Initialize portfolio
     engine.portfolio().set_cash(initial_balance);
@@ -1885,21 +1929,9 @@ void generate_trade_graphs(const std::vector<TradeRecord>& trades, double initia
 
 
 
-
 int main(int argc, char* argv[]) {
     // Register signal handler for Ctrl+C
     std::signal(SIGINT, signal_handler);
-    
-    // Clear registry and register the strategy
-    winter::strategy::StrategyRegistry::clear();
-    auto strategy = winter::strategy::StrategyRegistry::create_and_register<StatisticalArbitrageStrategy>();
-    
-    // Debug output to verify strategy registration
-    auto strategies = winter::strategy::StrategyRegistry::get_all_strategies();
-    std::cout << "Number of registered strategies: " << strategies.size() << std::endl;
-    for (const auto& s : strategies) {
-        std::cout << "Registered strategy: " << s->name() << std::endl;
-    }
     
     // Parse command line arguments
     std::string socket_endpoint = "tcp://127.0.0.1:5555";
@@ -1907,6 +1939,8 @@ int main(int argc, char* argv[]) {
     bool backtest_mode = false;
     bool trade_mode = false;
     std::string csv_file;
+    std::string strategy_id = "1"; // Default to strategy 1
+    std::string config_file = "winter_strategies.conf"; // Default config file
     
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -1916,29 +1950,73 @@ int main(int argc, char* argv[]) {
             initial_balance = std::stod(argv[++i]);
         } else if (arg == "--backtest" && i + 1 < argc) {
             backtest_mode = true;
-            csv_file = argv[++i];
+            
+            // Check if the next argument is a strategy ID (number)
+            if (isdigit(argv[i+1][0])) {
+                strategy_id = argv[++i];
+                
+                // Check if there's another argument for the data file
+                if (i + 1 < argc && argv[i+1][0] != '-') {
+                    csv_file = argv[++i];
+                }
+            } else {
+                csv_file = argv[++i];
+            }
         } else if (arg == "--trade" && i + 1 < argc) {
             trade_mode = true;
-            csv_file = argv[++i];
+            
+            // Check if the next argument is a strategy ID (number)
+            if (isdigit(argv[i+1][0])) {
+                strategy_id = argv[++i];
+                
+                // Check if there's another argument for the data file
+                if (i + 1 < argc && argv[i+1][0] != '-') {
+                    csv_file = argv[++i];
+                }
+            } else {
+                csv_file = argv[++i];
+            }
+        } else if (arg == "--config" && i + 1 < argc) {
+            config_file = argv[++i];
         } else if (arg == "--help") {
             std::cout << "Usage: " << argv[0] << " [options]" << std::endl;
             std::cout << "Options:" << std::endl;
             std::cout << "  --socket-endpoint <endpoint>  ZMQ socket endpoint (default: tcp://127.0.0.1:5555)" << std::endl;
-            std::cout << "  --initial-balance <amount>    Initial balance (default: 100000.0)" << std::endl;
+            std::cout << "  --initial-balance <amount>    Initial balance (default: 5000000.0)" << std::endl;
             std::cout << "  --backtest <csv_file>         Run in backtest mode using historical data from CSV" << std::endl;
-            std::cout << "  --trade <csv_file>            Run trade simulation on market data from CSV" << std::endl;
+            std::cout << "  --trade <strategy_id> <csv_file>  Run trade simulation with specified strategy on market data from CSV" << std::endl;
+            std::cout << "  --config <config_file>        Strategy configuration file (default: winter_strategies.conf)" << std::endl;
             std::cout << "  --help                        Show this help message" << std::endl;
             return 0;
         }
     }
     
-    // Run in appropriate mode
-    if (backtest_mode) {
-        run_backtest(csv_file, initial_balance);
-    } else if (trade_mode) {
-        run_trade_simulation(csv_file, initial_balance);
-    } else {
-        run_live_trading(socket_endpoint, initial_balance);
+    try {
+        // Load strategy configuration
+        auto config_map = parse_strategy_config(config_file);
+        
+        // Get strategy name from ID
+        std::string strategy_name;
+        auto it = config_map.find(strategy_id);
+        if (it != config_map.end()) {
+            strategy_name = it->second;
+            std::cout << "Selected strategy: " << strategy_name << std::endl;
+        } else {
+            std::cout << RED << "Strategy ID " << strategy_id << " not found in configuration." << RESET << std::endl;
+            return 1;
+        }
+        
+        // Run in appropriate mode
+        if (backtest_mode) {
+            run_backtest(csv_file, initial_balance, strategy_name);
+        } else if (trade_mode) {
+            run_trade_simulation(csv_file, initial_balance, strategy_name);
+        } else {
+            run_live_trading(socket_endpoint, initial_balance, strategy_name);
+        }
+    } catch (const std::exception& e) {
+        std::cout << RED << "Error: " << e.what() << RESET << std::endl;
+        return 1;
     }
     
     return 0;

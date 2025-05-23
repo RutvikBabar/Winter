@@ -24,6 +24,8 @@ APPS_DIR = applications
 BUILD_DIR = build
 
 # Source files
+# Add to UTILS_SOURCES or similar section
+
 CORE_SOURCES = $(wildcard $(SRC_DIR)/core/*.cpp)
 UTILS_SOURCES = $(wildcard $(SRC_DIR)/utils/*.cpp)
 STRATEGY_SOURCES = $(wildcard $(SRC_DIR)/strategy/*.cpp)

@@ -1,0 +1,22 @@
+# winter_strategies.yaml
+
+# List of strategies to enable
+enabled_strategies:
+  # - MovingAverageCrossover
+  - StatisticalArbitrage
+  # - MeanReversion
+
+# Strategy-specific parameters
+strategy_parameters:
+  MovingAverageCrossover:
+    fast_period: 10
+    slow_period: 30
+    
+  StatisticalArbitrage:
+    entry_threshold: 1.3
+    exit_threshold: 0.0
+    trailing_stop: 0.25
+    
+  MeanReversion:
+    lookback_period: 20
+    entry_threshold: 2.0

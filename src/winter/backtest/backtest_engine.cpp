@@ -424,7 +424,9 @@ PerformanceMetrics BacktestEngine::calculate_performance_metrics() {
     metrics.sharpe_ratio = calculate_sharpe_ratio(returns);
     
     // Maximum drawdown
-    metrics.max_drawdown = calculate_max_drawdown(equity_curve_);
+    double duration = 0.0;
+    metrics.max_drawdown = calculate_max_drawdown(equity_curve_, duration);
+    metrics.max_drawdown_duration = duration;
     metrics.max_drawdown_pct = (metrics.initial_capital != 0) ?
                               (metrics.max_drawdown / metrics.initial_capital) * 100.0 : 0.0;
     
@@ -504,22 +506,33 @@ double BacktestEngine::calculate_sharpe_ratio(const std::vector<double>& returns
         (annualized_return - risk_free_rate) / annualized_std_dev : 0.0;
 }
 
-double BacktestEngine::calculate_max_drawdown(const std::vector<EquityPoint>& equity_curve) {
-    double max_drawdown = 0.0;
-    double peak = equity_curve.empty() ? 0.0 : equity_curve[0].equity;
+double BacktestEngine::calculate_max_drawdown(const std::vector<EquityPoint>& equity_curve, double& duration) {
+    if (equity_curve.empty()) {
+        duration = 0.0;
+        return 0.0;
+    }
     
-    for (const auto& point : equity_curve) {
-        if (point.equity > peak) {
-            peak = point.equity;
-        }
-        
-        double drawdown = peak - point.equity;
-        if (drawdown > max_drawdown) {
-            max_drawdown = drawdown;
+    double max_dd = 0.0;
+    double peak = equity_curve[0].equity;
+    double max_duration = 0.0;
+    double current_duration = 0.0;
+    
+    for (size_t i = 1; i < equity_curve.size(); i++) {
+        if (equity_curve[i].equity > peak) {
+            peak = equity_curve[i].equity;
+            current_duration = 0.0;
+        } else {
+            current_duration += 1.0;
+            double dd = (peak - equity_curve[i].equity) / peak;
+            if (dd > max_dd) {
+                max_dd = dd;
+                max_duration = current_duration;
+            }
         }
     }
     
-    return max_drawdown;
+    duration = max_duration;
+    return max_dd;
 }
 
 bool BacktestEngine::generate_report(const std::string& output_file) {
@@ -747,6 +760,10 @@ void BacktestEngine::generate_html_report(const std::string& output_file, const 
                     $)" << std::fixed << std::setprecision(2) << metrics.max_drawdown << 
                     " (" << std::setprecision(2) << metrics.max_drawdown_pct << "%)" << R"(
                 </div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-title">Max Drawdown Duration</div>
+                <div class="metric-value">)" << std::fixed << std::setprecision(1) << metrics.max_drawdown_duration << R"( days</div>
             </div>
             <div class="metric-box">
                 <div class="metric-title">Total Trades</div>

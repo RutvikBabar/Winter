@@ -136,7 +136,7 @@ private:
     double exit_threshold_ = 0.5;   // Z-score threshold for exit
 
 public:
-    MeanReversionStrategy() : StrategyBase("MeanReversion") {}
+    MeanReversionStrategy(const std::string& name = "MeanReversion") : StrategyBase(name) {}
 
     std::vector<winter::core::Signal> process_tick(const winter::core::MarketData& data) override {
         std::vector<winter::core::Signal> signals;
@@ -209,3 +209,13 @@ private:
         return ((stock.short_volume_ma - stock.long_volume_ma) / stock.long_volume_ma) * 100;
     }
 };
+
+#include <winter/strategy/strategy_factory.hpp>
+
+// Register the strategy with the factory
+namespace {
+    bool mean_rev_registered = []() {
+        winter::strategy::StrategyFactory::register_type<MeanReversionStrategy>("MeanReversion");
+        return true;
+    }();
+}

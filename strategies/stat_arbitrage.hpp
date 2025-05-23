@@ -1,6 +1,8 @@
 #pragma once
 #include <winter/strategy/strategy_base.hpp>
 #include <winter/core/signal.hpp>
+#include <winter/strategy/strategy_factory.hpp>
+
 #include <winter/core/market_data.hpp>
 #include <deque>
 #include <unordered_map>
@@ -41,7 +43,7 @@ private:
     std::vector<winter::core::Signal> pending_signals;
     
     // Queue management parameters
-    const size_t MAX_QUEUE_SIZE = 3000000; // Increased queue size significantly
+    const size_t MAX_QUEUE_SIZE = 8000000; // Increased queue size significantly
     std::unique_ptr<std::atomic<size_t>[]> queue_sizes;
     std::atomic<size_t> dropped_messages{0};
     std::atomic<size_t> processed_messages{0};
@@ -314,7 +316,7 @@ private:
     const int CASH_CHECK_INTERVAL_MS = 500; // Check cash every 500ms
     
 public:
-    StatisticalArbitrageStrategy() : StrategyBase("StatArbitrage"), rng(42) {
+    StatisticalArbitrageStrategy(const std::string& name = "StatArbitrage") : StrategyBase(name), rng(42) {
         // Use all hardcoded pairs - no filtering
         active_pairs = all_possible_pairs;
         
@@ -1312,3 +1314,10 @@ std::string determine_sector(const std::string& symbol) {
     return "Unknown";
 }
 };
+// Register the strategy with the factory
+namespace {
+    bool stat_arb_registered = []() {
+        winter::strategy::StrategyFactory::register_type<StatisticalArbitrageStrategy>("StatArbitrage");
+        return true;
+    }();
+}
