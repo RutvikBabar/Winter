@@ -25,7 +25,7 @@ A high-performance C++ backtesting and trading framework built for statistical a
 - [Performance](#performance)
 - [Configuration](#configuration)
 - [Contributing](#contributing)
-- [License](#license)
+- [Strategies](#Strategies)
 
 ---
 
@@ -265,8 +265,8 @@ make clean && make
 ---
 
 
-# Writing and Registering Custom Strategies
-
+## Strategies
+Writing and Registering Custom strategies
 Follow these step-by-step instructions to create and register your own trading strategy in the Winter framework.
 
 ## Step 1: Create Strategy Header File
