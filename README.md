@@ -284,144 +284,146 @@ Create a new header file in the `strategies/` directory (e.g., `strategies/my_cu
 #include <algorithm>
 #include <numeric>
 
-class MyCustomStrategy : public winter::strategy::StrategyBase {
-private:
-    // Your strategy parameters
-    double entry_threshold = 2.0;
-    double exit_threshold = 0.5;
-    
-    // Data storage for each symbol
-    std::unordered_map<std::string, std::deque<double>> price_history;
-    std::unordered_map<std::string, int> positions;
-    
-    const int LOOKBACK_PERIOD = 20;
-    const double MAX_POSITION_PCT = 0.01; // 1% of capital per position
 
-public:
-    // Constructor must accept string parameter for factory compatibility
-    MyCustomStrategy(const std::string& name = "MyCustomStrategy") : StrategyBase(name) {}
     
-    // Main strategy logic - override this method
-    std::vector<winter::core::Signal> process_tick(const winter::core::MarketData& data) override {
-        std::vector<winter::core::Signal> signals;
+    class MyCustomStrategy : public winter::strategy::StrategyBase {
+    private:
+        // Your strategy parameters
+        double entry_threshold = 2.0;
+        double exit_threshold = 0.5;
         
-        // Update price history
-        price_history[data.symbol].push_back(data.price);
-        if (price_history[data.symbol].size() > LOOKBACK_PERIOD) {
-            price_history[data.symbol].pop_front();
-        }
+        // Data storage for each symbol
+        std::unordered_map<std::string, std::deque<double>> price_history;
+        std::unordered_map<std::string, int> positions;
         
-        // Only trade if we have enough history
-        if (price_history[data.symbol].size() < LOOKBACK_PERIOD) {
+        const int LOOKBACK_PERIOD = 20;
+        const double MAX_POSITION_PCT = 0.01; // 1% of capital per position
+    
+    public:
+        // Constructor must accept string parameter for factory compatibility
+        MyCustomStrategy(const std::string& name = "MyCustomStrategy") : StrategyBase(name) {}
+        
+        // Main strategy logic - override this method
+        std::vector<winter::core::Signal> process_tick(const winter::core::MarketData& data) override {
+            std::vector<winter::core::Signal> signals;
+            
+            // Update price history
+            price_history[data.symbol].push_back(data.price);
+            if (price_history[data.symbol].size() > LOOKBACK_PERIOD) {
+                price_history[data.symbol].pop_front();
+            }
+            
+            // Only trade if we have enough history
+            if (price_history[data.symbol].size() < LOOKBACK_PERIOD) {
+                return signals;
+            }
+            
+            // Calculate moving average
+            double sum = std::accumulate(price_history[data.symbol].begin(), 
+                                       price_history[data.symbol].end(), 0.0);
+            double moving_average = sum / price_history[data.symbol].size();
+            
+            // Calculate standard deviation
+            double variance = 0.0;
+            for (double price : price_history[data.symbol]) {
+                variance += (price - moving_average) * (price - moving_average);
+            }
+            double std_dev = std::sqrt(variance / price_history[data.symbol].size());
+            
+            // Calculate z-score
+            double z_score = (data.price - moving_average) / std_dev;
+            
+            // Get current position
+            int current_position = positions[data.symbol];
+            
+            // Generate signals based on z-score
+            if (current_position == 0) {
+                // Entry logic
+                if (z_score > entry_threshold) {
+                    // Price is high, go short
+                    winter::core::Signal signal;
+                    signal.symbol = data.symbol;
+                    signal.type = winter::core::SignalType::SELL;
+                    signal.price = data.price;
+                    signal.strength = std::min(1.0, z_score / entry_threshold);
+                    signals.push_back(signal);
+                    
+                    positions[data.symbol] = -1; // Mark as short
+                }
+                else if (z_score < -entry_threshold) {
+                    // Price is low, go long
+                    winter::core::Signal signal;
+                    signal.symbol = data.symbol;
+                    signal.type = winter::core::SignalType::BUY;
+                    signal.price = data.price;
+                    signal.strength = std::min(1.0, -z_score / entry_threshold);
+                    signals.push_back(signal);
+                    
+                    positions[data.symbol] = 1; // Mark as long
+                }
+            }
+            else {
+                // Exit logic
+                if (std::abs(z_score) < exit_threshold) {
+                    // Price has reverted, close position
+                    winter::core::Signal signal;
+                    signal.symbol = data.symbol;
+                    signal.type = current_position > 0 ? winter::core::SignalType::SELL : winter::core::SignalType::BUY;
+                    signal.price = data.price;
+                    signal.strength = 1.0;
+                    signals.push_back(signal);
+                    
+                    positions[data.symbol] = 0; // Close position
+                }
+            }
+            
             return signals;
         }
-        
-        // Calculate moving average
-        double sum = std::accumulate(price_history[data.symbol].begin(), 
-                                   price_history[data.symbol].end(), 0.0);
-        double moving_average = sum / price_history[data.symbol].size();
-        
-        // Calculate standard deviation
-        double variance = 0.0;
-        for (double price : price_history[data.symbol]) {
-            variance += (price - moving_average) * (price - moving_average);
-        }
-        double std_dev = std::sqrt(variance / price_history[data.symbol].size());
-        
-        // Calculate z-score
-        double z_score = (data.price - moving_average) / std_dev;
-        
-        // Get current position
-        int current_position = positions[data.symbol];
-        
-        // Generate signals based on z-score
-        if (current_position == 0) {
-            // Entry logic
-            if (z_score > entry_threshold) {
-                // Price is high, go short
-                winter::core::Signal signal;
-                signal.symbol = data.symbol;
-                signal.type = winter::core::SignalType::SELL;
-                signal.price = data.price;
-                signal.strength = std::min(1.0, z_score / entry_threshold);
-                signals.push_back(signal);
-                
-                positions[data.symbol] = -1; // Mark as short
-            }
-            else if (z_score < -entry_threshold) {
-                // Price is low, go long
-                winter::core::Signal signal;
-                signal.symbol = data.symbol;
-                signal.type = winter::core::SignalType::BUY;
-                signal.price = data.price;
-                signal.strength = std::min(1.0, -z_score / entry_threshold);
-                signals.push_back(signal);
-                
-                positions[data.symbol] = 1; // Mark as long
-            }
-        }
-        else {
-            // Exit logic
-            if (std::abs(z_score) < exit_threshold) {
-                // Price has reverted, close position
-                winter::core::Signal signal;
-                signal.symbol = data.symbol;
-                signal.type = current_position > 0 ? winter::core::SignalType::SELL : winter::core::SignalType::BUY;
-                signal.price = data.price;
-                signal.strength = 1.0;
-                signals.push_back(signal);
-                
-                positions[data.symbol] = 0; // Close position
-            }
-        }
-        
-        return signals;
+    };
+    
+    // Register the strategy with the factory
+    namespace {
+        bool my_custom_registered = []() {
+            winter::strategy::StrategyFactory::register_type<MyCustomStrategy>("MyCustomStrategy");
+            return true;
+        }();
     }
-};
-
-// Register the strategy with the factory
-namespace {
-    bool my_custom_registered = []() {
-        winter::strategy::StrategyFactory::register_type<MyCustomStrategy>("MyCustomStrategy");
-        return true;
-    }();
-}
 
 ## Step 2: Include Strategy in Main File
 
 Add your strategy header to `src/simulate/simulate.cpp`:
-
-#include "strategies/stat_arbitrage.hpp"
-#include "strategies/mean_reversion_strategy.hpp"
-#include "strategies/my_custom_strategy.hpp"  // Add this line
+    
+    #include "strategies/stat_arbitrage.hpp"
+    #include "strategies/mean_reversion_strategy.hpp"
+    #include "strategies/my_custom_strategy.hpp"  // Add this line
 
 ## Step 3: Update Strategy Configuration
 
 Add your strategy to `winter_strategies.conf`:
-
-# winter_strategies.conf
-# Format: strategy_id=strategy_name
-
-1=StatArbitrage
-2=MeanReversion
-3=MyCustomStrategy
-4=momentum_strategy
-5=pairs_trading
-
+    
+    # winter_strategies.conf
+    # Format: strategy_id=strategy_name
+    
+    1=StatArbitrage
+    2=MeanReversion
+    3=MyCustomStrategy
+    4=momentum_strategy
+    5=pairs_trading
+    
 ## Step 4: Build and Test
 
 Compile the framework with your new strategy:
-
-make clean
-make
+    
+    make clean
+    make
 
 Test your strategy:
 
-# Run backtest with your custom strategy (ID 3)
-./build/simulate --backtest 3 your_market_data.csv
-
-# Run trade simulation
-./build/simulate --trade 3 your_market_data.csv
+    # Run backtest with your custom strategy (ID 3)
+    ./build/simulate --backtest 3 your_market_data.csv
+    
+    # Run trade simulation
+    ./build/simulate --trade 3 your_market_data.csv
 
 ## Step 5: Advanced Strategy Features
 
@@ -429,90 +431,90 @@ Test your strategy:
 
 Make your strategy configurable by adding parameters:
 
-class MyCustomStrategy : public winter::strategy::StrategyBase {
-private:
-    // Configurable parameters
-    double entry_threshold;
-    double exit_threshold;
-    int lookback_period;
-    double max_position_pct;
-    
-public:
-    MyCustomStrategy(const std::string& name = "MyCustomStrategy", 
-                    double entry_thresh = 2.0,
-                    double exit_thresh = 0.5,
-                    int lookback = 20) 
-        : StrategyBase(name), 
-          entry_threshold(entry_thresh),
-          exit_threshold(exit_thresh),
-          lookback_period(lookback) {}
+    class MyCustomStrategy : public winter::strategy::StrategyBase {
+    private:
+        // Configurable parameters
+        double entry_threshold;
+        double exit_threshold;
+        int lookback_period;
+        double max_position_pct;
+        
+    public:
+        MyCustomStrategy(const std::string& name = "MyCustomStrategy", 
+                        double entry_thresh = 2.0,
+                        double exit_thresh = 0.5,
+                        int lookback = 20) 
+            : StrategyBase(name), 
+              entry_threshold(entry_thresh),
+              exit_threshold(exit_thresh),
+              lookback_period(lookback) {}
 
 ### Adding Risk Management
 
 Implement position sizing and risk controls:
 
-private:
-    double calculate_position_size(const std::string& symbol, double price) {
-        // Simple position sizing based on capital percentage
-        const double CAPITAL = 5000000.0; // $5M
-        return (CAPITAL * max_position_pct) / price;
-    }
-    
-    bool check_risk_limits(const std::string& symbol, double price) {
-        // Add your risk checks here
-        // e.g., maximum exposure, correlation limits, etc.
-        return true;
-    }
+    private:
+        double calculate_position_size(const std::string& symbol, double price) {
+            // Simple position sizing based on capital percentage
+            const double CAPITAL = 5000000.0; // $5M
+            return (CAPITAL * max_position_pct) / price;
+        }
+        
+        bool check_risk_limits(const std::string& symbol, double price) {
+            // Add your risk checks here
+            // e.g., maximum exposure, correlation limits, etc.
+            return true;
+        }
 
 ### Adding Performance Tracking
 
 Track strategy performance:
 
-private:
-    struct PerformanceMetrics {
-        int total_trades = 0;
-        int winning_trades = 0;
-        double total_pnl = 0.0;
-        double max_drawdown = 0.0;
-    } performance;
-    
-    void update_performance(double trade_pnl) {
-        performance.total_trades++;
-        performance.total_pnl += trade_pnl;
-        if (trade_pnl > 0) {
-            performance.winning_trades++;
+    private:
+        struct PerformanceMetrics {
+            int total_trades = 0;
+            int winning_trades = 0;
+            double total_pnl = 0.0;
+            double max_drawdown = 0.0;
+        } performance;
+        
+        void update_performance(double trade_pnl) {
+            performance.total_trades++;
+            performance.total_pnl += trade_pnl;
+            if (trade_pnl > 0) {
+                performance.winning_trades++;
+            }
+            // Update other metrics...
         }
-        // Update other metrics...
-    }
 
 ## Step 6: Strategy Templates
 
 ### Mean Reversion Template
 
-class MeanReversionTemplate : public winter::strategy::StrategyBase {
-    // Implement mean reversion logic
-    // - Calculate moving averages
-    // - Detect overbought/oversold conditions
-    // - Generate contrarian signals
-};
+    class MeanReversionTemplate : public winter::strategy::StrategyBase {
+        // Implement mean reversion logic
+        // - Calculate moving averages
+        // - Detect overbought/oversold conditions
+        // - Generate contrarian signals
+    };
 
 ### Momentum Template
 
-class MomentumTemplate : public winter::strategy::StrategyBase {
-    // Implement momentum logic
-    // - Calculate price momentum
-    // - Detect trend breakouts
-    // - Generate trend-following signals
-};
+    class MomentumTemplate : public winter::strategy::StrategyBase {
+        // Implement momentum logic
+        // - Calculate price momentum
+        // - Detect trend breakouts
+        // - Generate trend-following signals
+    };
 
 ### Pairs Trading Template
 
-class PairsTradingTemplate : public winter::strategy::StrategyBase {
-    // Implement pairs trading logic
-    // - Calculate spread between correlated assets
-    // - Detect spread divergence
-    // - Generate market-neutral signals
-};
+    class PairsTradingTemplate : public winter::strategy::StrategyBase {
+        // Implement pairs trading logic
+        // - Calculate spread between correlated assets
+        // - Detect spread divergence
+        // - Generate market-neutral signals
+    };
 
 ## Step 7: Testing and Validation
 
@@ -520,29 +522,29 @@ class PairsTradingTemplate : public winter::strategy::StrategyBase {
 
 Create tests for your strategy:
 
-// tests/test_my_custom_strategy.cpp
-#include "strategies/my_custom_strategy.hpp"
-#include <cassert>
-
-void test_signal_generation() {
-    MyCustomStrategy strategy;
-    winter::core::MarketData data;
-    data.symbol = "TEST";
-    data.price = 100.0;
-    data.volume = 1000;
+    // tests/test_my_custom_strategy.cpp
+    #include "strategies/my_custom_strategy.hpp"
+    #include <cassert>
     
-    auto signals = strategy.process_tick(data);
-    // Add your assertions here
-}
+    void test_signal_generation() {
+        MyCustomStrategy strategy;
+        winter::core::MarketData data;
+        data.symbol = "TEST";
+        data.price = 100.0;
+        data.volume = 1000;
+        
+        auto signals = strategy.process_tick(data);
+        // Add your assertions here
+    }
 
 ### Backtesting
 
 Test with historical data:
 
 # Test with different time periods
-./build/simulate --backtest 3 data_2020.csv
-./build/simulate --backtest 3 data_2021.csv
-./build/simulate --backtest 3 data_2022.csv
+    ./build/simulate --backtest 3 data_2020.csv
+    ./build/simulate --backtest 3 data_2021.csv
+    ./build/simulate --backtest 3 data_2022.csv
 
 ### Parameter Optimization
 
@@ -558,13 +560,13 @@ Test different parameter combinations:
 ### Signal Types
 
 // Buy signal
-signal.type = winter::core::SignalType::BUY;
+    signal.type = winter::core::SignalType::BUY;
 
 // Sell signal  
-signal.type = winter::core::SignalType::SELL;
+    signal.type = winter::core::SignalType::SELL;
 
 // Exit signal (close position)
-signal.type = winter::core::SignalType::EXIT;
+    signal.type = winter::core::SignalType::EXIT;
 
 ### Signal Strength
 
@@ -578,21 +580,21 @@ signal.strength = 0.7;
 signal.strength = 0.3;
 
 ### Error Handling
-
-std::vector<winter::core::Signal> process_tick(const winter::core::MarketData& data) override {
-    std::vector<winter::core::Signal> signals;
     
-    try {
-        // Your strategy logic here
+    std::vector<winter::core::Signal> process_tick(const winter::core::MarketData& data) override {
+        std::vector<winter::core::Signal> signals;
         
-    } catch (const std::exception& e) {
-        // Log error and return empty signals
-        winter::utils::Logger::error() << "Strategy error: " << e.what() << winter::utils::Logger::endl;
+        try {
+            // Your strategy logic here
+            
+        } catch (const std::exception& e) {
+            // Log error and return empty signals
+            winter::utils::Logger::error() << "Strategy error: " << e.what() << winter::utils::Logger::endl;
+            return signals;
+        }
+        
         return signals;
     }
-    
-    return signals;
-}
 
 Your custom strategy is now ready to use with the Winter framework!
 
