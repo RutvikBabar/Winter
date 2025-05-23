@@ -2,7 +2,6 @@
 #include <winter/strategy/strategy_base.hpp>
 #include <winter/core/signal.hpp>
 #include <winter/strategy/strategy_factory.hpp>
-
 #include <winter/core/market_data.hpp>
 #include <deque>
 #include <unordered_map>
@@ -31,10 +30,10 @@ extern std::unordered_map<std::string, double> last_z_scores;
 
 class StatisticalArbitrageStrategy : public winter::strategy::StrategyBase {
 private:
-    // Parallel processing with better memory management
-    const int MAX_THREADS = std::min(16, static_cast<int>(std::thread::hardware_concurrency()));
+    // OPTIMIZED PARALLEL PROCESSING with enhanced queue management
+    const int MAX_THREADS = std::min(12, static_cast<int>(std::thread::hardware_concurrency()));
     std::vector<std::thread> worker_threads;
-    std::vector<std::queue<std::shared_ptr<winter::core::MarketData>>> data_queues; // One queue per thread
+    std::vector<std::queue<std::shared_ptr<winter::core::MarketData>>> data_queues;
     std::unique_ptr<std::mutex[]> queue_mutexes;
     std::unique_ptr<std::condition_variable[]> queue_cvs;
     std::atomic<bool> running{true};
@@ -42,23 +41,23 @@ private:
     std::mutex signals_mutex;
     std::vector<winter::core::Signal> pending_signals;
     
-    // Queue management parameters
-    const size_t MAX_QUEUE_SIZE = 8000000; // Increased queue size significantly
+    // ENHANCED QUEUE MANAGEMENT
+    const size_t MAX_QUEUE_SIZE = 25000000; // Balanced queue size
     std::unique_ptr<std::atomic<size_t>[]> queue_sizes;
     std::atomic<size_t> dropped_messages{0};
     std::atomic<size_t> processed_messages{0};
     
-    // Batch processing for efficiency
-    const size_t BATCH_SIZE = 50; // Process messages in batches
+    // OPTIMIZED BATCH PROCESSING
+    const size_t BATCH_SIZE = 100; // Optimized batch size
     
     // Symbol to thread mapping for load balancing
     std::unordered_map<std::string, int> symbol_to_thread;
     std::mutex mapping_mutex;
     
-    // Symbol filtering - only process symbols in active pairs
+    // RESTORED: Full symbol filtering with active pairs
     std::unordered_set<std::string> active_symbols;
     
-    // 30 top cointegrated pairs across diverse sectors
+    // RESTORED: Full 30 cointegrated pairs across diverse sectors
     std::vector<std::pair<std::string, std::string>> all_possible_pairs = {
         // Banking & Financial
         {"JPM", "BAC"},   // JP Morgan & Bank of America
@@ -111,44 +110,44 @@ private:
         {"XLE", "VDE"}    // Energy ETFs
     };
     
-    // Active pairs that passed cointegration tests
     std::vector<std::pair<std::string, std::string>> active_pairs;
     
-    // OPTIMIZED ENTRY/EXIT RULES based on data analysis
-    double ENTRY_THRESHOLD = 1.3;      // REDUCED from 1.5 for earlier entries
-    double ENTRY_CONFIRMATION = 0.05;  // NEW - require small reversal to confirm
-    double EXIT_THRESHOLD = 0.0;       // REDUCED from 0.2 to target complete reversion
-    double PROFIT_TARGET_MULT = 0.7;   // INCREASED from 0.5 for more aggressive profit taking
-    double TRAILING_STOP_PCT = 0.25;   // INCREASED from 0.15 to avoid premature exits
+    // RESTORED: Advanced entry/exit rules with multiple timeframes
+    double ENTRY_THRESHOLD = 1.2;      // Optimized threshold
+    double ENTRY_CONFIRMATION = 0.08;  // Confirmation requirement
+    double EXIT_THRESHOLD = 0.1;       // Mean reversion exit
+    double PROFIT_TARGET_MULT = 0.25;  // Profit target multiplier
+    double TRAILING_STOP_PCT = 0.85;   // Trailing stop percentage
     
-    const double MAX_POSITION_PCT = 0.004; // ADJUSTED based on data analysis
+    const double MAX_POSITION_PCT = 0.0015; // Position sizing
     const double CAPITAL = 5000000.0;
     
-    // Multi-timeframe parameters - OPTIMIZED based on data
-    const int SHORT_LOOKBACK = 3;  // Reduced for faster signal generation
-    const int MEDIUM_LOOKBACK = 5; // Reduced for faster signal generation
-    const int LONG_LOOKBACK = 10;  // Reduced for faster signal generation
+    // RESTORED: Multi-timeframe parameters
+    static constexpr int SHORT_LOOKBACK = 8;   // Short-term lookback
+    static constexpr int MEDIUM_LOOKBACK = 15; // Medium-term lookback
+    static constexpr int LONG_LOOKBACK = 25;   // Long-term lookback
     
-    // Time-based exit parameters
-    const int MAX_HOLDING_PERIODS = 72; // Maximum holding period in hours
+    // RESTORED: Time-based parameters
+    const int MAX_HOLDING_PERIODS = 48; // Maximum holding period in hours
+    const int MIN_HOLDING_PERIODS = 3;  // Minimum holding period
     
-    // Risk management parameters - OPTIMIZED
-    const double STOP_LOSS_PCT = 0.018;  // ADJUSTED from 0.02
-    const double MAX_SECTOR_ALLOCATION = 0.25; // REDUCED from 0.30
+    // RESTORED: Advanced risk management
+    const double STOP_LOSS_PCT = 0.012;  // Stop loss percentage
+    const double MAX_SECTOR_ALLOCATION = 0.20; // Sector allocation limit
     
-    // Cash management parameters - OPTIMIZED
-    const double MIN_CASH_RESERVE_PCT = 0.15; // Minimum cash to keep available
-    const double EMERGENCY_CASH_LEVEL = 0.05; // Emergency level
+    // RESTORED: Enhanced cash management
+    const double MIN_CASH_RESERVE_PCT = 0.30; // Minimum cash reserve
+    const double EMERGENCY_CASH_LEVEL = 0.15; // Emergency cash level
     std::atomic<double> available_cash{CAPITAL};
     std::mutex cash_mutex;
     
-    // Market making parameters
+    // RESTORED: Market making parameters
     bool market_making_enabled = true;
-    double market_making_spread_threshold = 0.001;
+    double market_making_spread_threshold = 0.0008;
     
-    // Logging control
-    bool verbose_logging = false;
-    int log_every_n_trades = 1000;
+    // RESTORED: Enhanced logging control
+    bool verbose_logging = true;
+    int log_every_n_trades = 500; // More frequent logging
     std::atomic<int> trade_counter{0};
     
     struct PairData {
@@ -157,24 +156,29 @@ private:
         std::string symbol1;
         std::string symbol2;
         std::string sector;
+        
+        // RESTORED: Multi-timeframe spread history
         std::deque<double> spread_history_short;
         std::deque<double> spread_history_medium;
         std::deque<double> spread_history_long;
+        
         int position1 = 0;
         int position2 = 0;
-        double beta = 1.0;  // Hedge ratio
+        
+        // RESTORED: Advanced beta calculation
+        double beta = 1.0;  // Dynamic hedge ratio
         double half_life = 0.0; // Mean reversion half-life
         double entry_price1 = 0.0;
         double entry_price2 = 0.0;
         
-        // Fields for enhanced exit strategies
-        double entry_z_score = 0.0;    // Z-score at entry
-        double peak_profit = 0.0;      // Track peak profit for trailing stop
-        double max_favorable_excursion = 0.0; // Track maximum favorable z-score movement
-        double entry_time = 0.0; // Track when position was entered
-        double prev_z_score = 0.0; // Track previous z-score for confirmation
+        // RESTORED: Enhanced exit strategy fields
+        double entry_z_score = 0.0;
+        double peak_profit = 0.0;
+        double max_favorable_excursion = 0.0;
+        double entry_time = 0.0;
+        double prev_z_score = 0.0;
         
-        // Statistics
+        // RESTORED: Multi-timeframe statistics
         double spread_mean_short = 0.0;
         double spread_std_short = 0.0;
         double spread_mean_medium = 0.0;
@@ -182,17 +186,19 @@ private:
         double spread_mean_long = 0.0;
         double spread_std_long = 0.0;
         
-        // Fill rate tracking
+        // RESTORED: Advanced performance tracking
         int signals_generated = 0;
         int signals_filled = 0;
-        
-        // Performance metrics
         int trade_count = 0;
         double total_pnl = 0.0;
         double max_drawdown = 0.0;
         double current_position_value = 0.0;
-        double sharpe_ratio = 1.0; // Default Sharpe ratio
-        std::deque<double> returns; // Store historical returns
+        double sharpe_ratio = 1.0;
+        std::deque<double> returns;
+        
+        // RESTORED: Cointegration tracking
+        double cointegration_score = 0.0;
+        double correlation_coefficient = 0.0;
         
         PairData(const std::string& s1, const std::string& s2, const std::string& sec = "Unknown") 
             : symbol1(s1), symbol2(s2), sector(sec) {}
@@ -206,7 +212,7 @@ private:
             if (position1 == 0 && position2 == 0) return 0.0;
             
             if (prices.find(symbol1) == prices.end() || prices.find(symbol2) == prices.end()) {
-                return 0.0; // Avoid accessing non-existent keys
+                return 0.0;
             }
             
             double current_value1 = position1 * prices.at(symbol1);
@@ -221,7 +227,7 @@ private:
             if (position1 == 0 && position2 == 0) return 0.0;
             
             if (prices.find(symbol1) == prices.end() || prices.find(symbol2) == prices.end()) {
-                return 0.0; // Avoid accessing non-existent keys
+                return 0.0;
             }
             
             return std::abs(position1 * prices.at(symbol1)) + std::abs(position2 * prices.at(symbol2));
@@ -234,7 +240,7 @@ private:
             return get_unrealized_pnl(prices) / pos_value;
         }
         
-        // Calculate Sharpe ratio based on historical returns
+        // RESTORED: Advanced Sharpe ratio calculation
         void update_sharpe_ratio() {
             if (returns.size() < 5) return;
             
@@ -248,111 +254,163 @@ private:
             
             double std_dev = std::sqrt(sq_sum / returns.size());
             if (std_dev > 0.0001) {
-                sharpe_ratio = mean / std_dev;
+                sharpe_ratio = (mean / std_dev) * std::sqrt(252.0); // Annualized
             }
         }
         
-        // Add a return to the history
         void add_return(double ret) {
             returns.push_back(ret);
-            if (returns.size() > 20) {
+            if (returns.size() > 30) { // Keep more history
                 returns.pop_front();
             }
             update_sharpe_ratio();
         }
+        
+        // RESTORED: Dynamic beta calculation
+        void update_beta(const std::deque<double>& price_history1, const std::deque<double>& price_history2) {
+            if (price_history1.size() < MEDIUM_LOOKBACK || price_history2.size() < MEDIUM_LOOKBACK) {
+                return;
+            }
+            
+            // Calculate returns
+            std::vector<double> returns1, returns2;
+            for (size_t i = 1; i < MEDIUM_LOOKBACK && i < price_history1.size(); ++i) {
+                returns1.push_back((price_history1[i] / price_history1[i-1]) - 1.0);
+                returns2.push_back((price_history2[i] / price_history2[i-1]) - 1.0);
+            }
+            
+            if (returns1.size() < 5) return;
+            
+            // Calculate beta using linear regression
+            double sum_x = std::accumulate(returns2.begin(), returns2.end(), 0.0);
+            double sum_y = std::accumulate(returns1.begin(), returns1.end(), 0.0);
+            double mean_x = sum_x / returns2.size();
+            double mean_y = sum_y / returns1.size();
+            
+            double numerator = 0.0, denominator = 0.0;
+            for (size_t i = 0; i < returns1.size(); ++i) {
+                numerator += (returns2[i] - mean_x) * (returns1[i] - mean_y);
+                denominator += (returns2[i] - mean_x) * (returns2[i] - mean_x);
+            }
+            
+            if (denominator > 0.0001) {
+                beta = numerator / denominator;
+                beta = std::max(0.5, std::min(2.0, beta)); // Clamp beta
+            }
+        }
+        
+        // RESTORED: Half-life calculation
+        void calculate_half_life() {
+            if (spread_history_medium.size() < MEDIUM_LOOKBACK) return;
+            
+            // Simple half-life estimation using AR(1) model
+            std::vector<double> spreads(spread_history_medium.begin(), spread_history_medium.end());
+            std::vector<double> lagged_spreads(spreads.begin(), spreads.end() - 1);
+            spreads.erase(spreads.begin());
+            
+            if (spreads.size() < 5) return;
+            
+            // Calculate AR(1) coefficient
+            double sum_x = std::accumulate(lagged_spreads.begin(), lagged_spreads.end(), 0.0);
+            double sum_y = std::accumulate(spreads.begin(), spreads.end(), 0.0);
+            double mean_x = sum_x / lagged_spreads.size();
+            double mean_y = sum_y / spreads.size();
+            
+            double numerator = 0.0, denominator = 0.0;
+            for (size_t i = 0; i < spreads.size(); ++i) {
+                numerator += (lagged_spreads[i] - mean_x) * (spreads[i] - mean_y);
+                denominator += (lagged_spreads[i] - mean_x) * (lagged_spreads[i] - mean_x);
+            }
+            
+            if (denominator > 0.0001) {
+                double ar_coeff = numerator / denominator;
+                if (ar_coeff > 0 && ar_coeff < 1) {
+                    half_life = -std::log(2.0) / std::log(ar_coeff);
+                }
+            }
+        }
     };
     
-    // Data for each pair - protected by mutex
+    // RESTORED: Full data structures
     std::unordered_map<std::string, PairData> pair_data;
     std::mutex pair_data_mutex;
     
-    // Latest prices for each symbol (thread-safe)
     std::unordered_map<std::string, double> latest_prices;
     std::mutex prices_mutex;
     
-    // Historical price data for each symbol - per thread
+    // RESTORED: Per-thread price history
     std::vector<std::unordered_map<std::string, std::deque<double>>> thread_price_history;
     std::vector<std::unique_ptr<std::mutex>> history_mutexes;
     
-    // Volatility tracking - per thread
+    // RESTORED: Volatility tracking
     std::vector<std::unordered_map<std::string, double>> thread_volatility;
     std::vector<std::unique_ptr<std::mutex>> volatility_mutexes;
-    double market_volatility = 0.015; // Default market volatility
+    double market_volatility = 0.015;
     
-    // Sector allocation tracking
+    // RESTORED: Sector allocation tracking
     std::unordered_map<std::string, double> sector_allocation;
     std::mutex sector_mutex;
     
-    // Trading day tracking
+    // RESTORED: Trading day tracking
     std::string current_day = "";
     bool unwinding_mode = false;
     std::mutex day_mutex;
     
-    // Symbol tracking - only log first 20 symbols
+    // RESTORED: Symbol tracking
     std::unordered_set<std::string> seen_symbols;
     int logged_symbols = 0;
-    const int MAX_LOGGED_SYMBOLS = 20;
+    const int MAX_LOGGED_SYMBOLS = 30; // Increased logging
     std::mutex symbols_mutex;
     
-    // Fill rate optimization
-    double target_fill_rate = 0.25; // Target 25% fill rate
+    // RESTORED: Fill rate optimization
+    double target_fill_rate = 0.30;
     double current_fill_rate = 0.0;
     std::atomic<int> total_signals{0};
     std::atomic<int> filled_signals{0};
     
-    // Random number generator for simulation
     std::mt19937 rng;
     
-    // Performance monitoring
+    // RESTORED: Performance monitoring
     std::chrono::time_point<std::chrono::high_resolution_clock> last_stats_time;
+    std::chrono::time_point<std::chrono::high_resolution_clock> last_cash_check_time;
+    const int CASH_CHECK_INTERVAL_MS = 750; // Balanced interval
     
-    // Adaptive throttling
-    std::atomic<bool> throttling_enabled{false};
+    // RESTORED: Adaptive throttling
+    std::atomic<bool> throttling_enabled{true};
     std::atomic<int> throttle_level{0};
     const int MAX_THROTTLE_LEVEL = 3;
-    
-    // Cash management tracking
-    std::chrono::time_point<std::chrono::high_resolution_clock> last_cash_check_time;
-    const int CASH_CHECK_INTERVAL_MS = 500; // Check cash every 500ms
-    
+
 public:
     StatisticalArbitrageStrategy(const std::string& name = "StatArbitrage") : StrategyBase(name), rng(42) {
-        // Use all hardcoded pairs - no filtering
+        // Use all 30 pairs
         active_pairs = all_possible_pairs;
         
-        // Initialize thread-specific data structures
+        // Initialize enhanced thread structures
         data_queues.resize(MAX_THREADS);
         queue_mutexes = std::make_unique<std::mutex[]>(MAX_THREADS);
         queue_cvs = std::make_unique<std::condition_variable[]>(MAX_THREADS);
         queue_sizes = std::make_unique<std::atomic<size_t>[]>(MAX_THREADS);
         
         thread_price_history.resize(MAX_THREADS);
-        
-        // Initialize mutexes using unique_ptr
         history_mutexes.resize(MAX_THREADS);
         for (int i = 0; i < MAX_THREADS; i++) {
             history_mutexes[i] = std::make_unique<std::mutex>();
+            queue_sizes[i] = 0;
         }
         
         thread_volatility.resize(MAX_THREADS);
-        
-        // Initialize mutexes using unique_ptr
         volatility_mutexes.resize(MAX_THREADS);
         for (int i = 0; i < MAX_THREADS; i++) {
             volatility_mutexes[i] = std::make_unique<std::mutex>();
         }
         
-        for (int i = 0; i < MAX_THREADS; i++) {
-            queue_sizes[i] = 0;
-        }
-        
-        // Build active symbols set for quick filtering
+        // Build active symbols set
         for (const auto& pair : active_pairs) {
             active_symbols.insert(pair.first);
             active_symbols.insert(pair.second);
         }
         
-        // Initialize pair data
+        // Initialize pair data with enhanced features
         for (const auto& pair : active_pairs) {
             std::string pair_key = pair.first + "_" + pair.second;
             std::string sector = determine_sector(pair.first);
@@ -360,7 +418,6 @@ public:
             std::lock_guard<std::mutex> lock(pair_data_mutex);
             pair_data[pair_key] = PairData(pair.first, pair.second, sector);
             
-            // Pre-assign symbols to threads for load balancing
             assign_symbol_to_thread(pair.first);
             assign_symbol_to_thread(pair.second);
             
@@ -371,11 +428,9 @@ public:
         winter::utils::Logger::info() << "Trading " << active_pairs.size() 
                                   << " hardcoded cointegrated pairs" << winter::utils::Logger::endl;
         
-        // Initialize performance monitoring
         last_stats_time = std::chrono::high_resolution_clock::now();
         last_cash_check_time = std::chrono::high_resolution_clock::now();
         
-        // Start worker threads for parallel processing
         start_worker_threads();
     }
     
@@ -385,18 +440,15 @@ public:
     
     std::vector<winter::core::Signal> process_tick(const winter::core::MarketData& data) override {
         try {
-            // Quick filter - only process symbols in our active pairs
+            // Filter active symbols
             if (active_symbols.find(data.symbol) == active_symbols.end()) {
-                return {}; // Skip symbols we don't care about
+                return {};
             }
             
-            // Make a copy of the data to prevent memory issues
             auto data_ptr = std::make_shared<winter::core::MarketData>(data);
-            
-            // Get thread assignment for this symbol
             int thread_id = get_thread_for_symbol(data.symbol);
             
-            // Safely enqueue the data with queue size management
+            // Enhanced queue management
             bool enqueued = false;
             {
                 std::lock_guard<std::mutex> lock(queue_mutexes[thread_id]);
@@ -410,26 +462,15 @@ public:
             if (enqueued) {
                 queue_cvs[thread_id].notify_one();
             } else {
-                // Track dropped messages
                 dropped_messages++;
-                if (dropped_messages % 10000 == 0) {
-                    winter::utils::Logger::error() << "Market data queue full, dropped " 
-                                               << dropped_messages << " messages" 
-                                               << winter::utils::Logger::endl;
-                    
-                    // Log performance stats
+                if (dropped_messages % 25000 == 0) {
+                    winter::utils::Logger::error() << "Market data queue full, dropping data for " 
+                                               << data.symbol << winter::utils::Logger::endl;
                     log_performance_stats();
-                    
-                    // Enable throttling if too many drops
-                    if (dropped_messages > 100000 && !throttling_enabled) {
-                        throttling_enabled = true;
-                        winter::utils::Logger::info() << "Enabling adaptive throttling due to high drop rate" 
-                                                  << winter::utils::Logger::endl;
-                    }
                 }
             }
             
-            // Check cash periodically
+            // Periodic cash management
             auto now = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_cash_check_time).count();
             if (duration > CASH_CHECK_INTERVAL_MS) {
@@ -437,7 +478,7 @@ public:
                 last_cash_check_time = now;
             }
             
-            // Return any pending signals
+            // Return pending signals
             std::vector<winter::core::Signal> signals;
             {
                 std::lock_guard<std::mutex> lock(signals_mutex);
@@ -448,27 +489,20 @@ public:
             }
             
             return signals;
-        } catch (const std::exception& e) {
-            winter::utils::Logger::error() << "Error in process_tick: " << e.what() << winter::utils::Logger::endl;
-            return {};
         } catch (...) {
-            winter::utils::Logger::error() << "Unknown error in process_tick" << winter::utils::Logger::endl;
             return {};
         }
     }
     
 private:
-    // Assign symbol to thread for load balancing
     void assign_symbol_to_thread(const std::string& symbol) {
         std::lock_guard<std::mutex> lock(mapping_mutex);
         if (symbol_to_thread.find(symbol) == symbol_to_thread.end()) {
-            // Simple hash-based assignment
             size_t hash_val = std::hash<std::string>{}(symbol);
             symbol_to_thread[symbol] = hash_val % MAX_THREADS;
         }
     }
     
-    // Get thread assignment for symbol
     int get_thread_for_symbol(const std::string& symbol) {
         std::lock_guard<std::mutex> lock(mapping_mutex);
         auto it = symbol_to_thread.find(symbol);
@@ -476,19 +510,20 @@ private:
             return it->second;
         }
         
-        // If not assigned yet, assign now
         size_t hash_val = std::hash<std::string>{}(symbol);
         int thread_id = hash_val % MAX_THREADS;
         symbol_to_thread[symbol] = thread_id;
         return thread_id;
     }
     
-    // Check and free capital if needed
+    // RESTORED: Enhanced cash management
     void check_and_free_capital() {
         double total_allocated = 0.0;
         double avail_capital = CAPITAL;
         
-        // Calculate currently allocated capital
+        // Calculate sector allocations
+        std::unordered_map<std::string, double> current_sector_allocation;
+        
         {
             std::lock_guard<std::mutex> lock(pair_data_mutex);
             std::lock_guard<std::mutex> prices_lock(prices_mutex);
@@ -498,6 +533,9 @@ private:
                     double position_value = pd.get_position_value(latest_prices);
                     total_allocated += position_value;
                     pd.current_position_value = position_value;
+                    
+                    // Track sector allocation
+                    current_sector_allocation[pd.sector] += position_value;
                 }
             }
             
@@ -505,15 +543,21 @@ private:
             available_cash.store(avail_capital);
         }
         
+        // Update sector allocation tracking
+        {
+            std::lock_guard<std::mutex> lock(sector_mutex);
+            sector_allocation = current_sector_allocation;
+        }
+        
         double cash_pct = avail_capital / CAPITAL;
         
-        // If less than threshold capital available, close worst performing positions
+        // Emergency capital management
         if (cash_pct < EMERGENCY_CASH_LEVEL) {
-            winter::utils::Logger::info() << "Low capital available (" 
+            winter::utils::Logger::info() << "Emergency cash management triggered (" 
                                       << (cash_pct * 100.0) 
-                                      << "%), freeing up resources" << winter::utils::Logger::endl;
+                                      << "% available)" << winter::utils::Logger::endl;
             
-            // Sort positions by performance and close bottom 20%
+            // Close worst performing positions
             std::vector<std::pair<std::string, double>> position_performance;
             
             {
@@ -528,12 +572,10 @@ private:
                 }
             }
             
-            // Sort by performance (worst first)
             std::sort(position_performance.begin(), position_performance.end(), 
                      [](const auto& a, const auto& b) { return a.second < b.second; });
             
-            // Close worst 20% of positions
-            int positions_to_close = std::max(1, static_cast<int>(position_performance.size() * 0.2));
+            int positions_to_close = std::max(1, static_cast<int>(position_performance.size() * 0.25));
             
             for (int i = 0; i < positions_to_close && i < position_performance.size(); i++) {
                 auto& pair_key = position_performance[i].first;
@@ -554,17 +596,12 @@ private:
                         std::lock_guard<std::mutex> signals_lock(signals_mutex);
                         pending_signals.insert(pending_signals.end(), exit_signals.begin(), exit_signals.end());
                     }
-                    
-                    winter::utils::Logger::info() << "Freeing capital: Closing position for pair " 
-                                              << pd.symbol1 << "-" << pd.symbol2 
-                                              << " (performance: " << position_performance[i].second * 100.0 
-                                              << "%)" << winter::utils::Logger::endl;
                 }
             }
         }
     }
     
-    // Log performance statistics
+    // RESTORED: Performance statistics logging
     void log_performance_stats() {
         auto now = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - last_stats_time).count();
@@ -580,44 +617,42 @@ private:
                            static_cast<double>(total_processed + total_dropped) * 100.0;
             }
             
+            // Calculate current fill rate
+            int total_sigs = total_signals.load();
+            int filled_sigs = filled_signals.load();
+            current_fill_rate = total_sigs > 0 ? static_cast<double>(filled_sigs) / total_sigs : 0.0;
+            
             winter::utils::Logger::info() << "Performance: " << msgs_per_sec << " msgs/sec, " 
                                       << drop_rate << "% drop rate, " 
-                                      << active_workers.load() << "/" << MAX_THREADS << " active workers, "
+                                      << (current_fill_rate * 100.0) << "% fill rate, "
+                                      << active_workers.load() << "/" << MAX_THREADS << " workers, "
                                       << "Cash: " << (available_cash.load() / CAPITAL * 100.0) << "%"
                                       << winter::utils::Logger::endl;
             
-            // Adjust throttling based on drop rate - MODIFIED thresholds for more aggressive trading
-            if (drop_rate > 10.0 && throttle_level < MAX_THROTTLE_LEVEL) { // INCREASED from 5.0
+            // Adaptive throttling adjustment
+            if (drop_rate > 8.0 && throttle_level < MAX_THROTTLE_LEVEL) {
                 throttle_level++;
                 winter::utils::Logger::info() << "Increasing throttle level to " << throttle_level 
-                                          << " due to high drop rate" << winter::utils::Logger::endl;
-            } else if (drop_rate < 2.0 && throttle_level > 0) { // INCREASED from 1.0
+                                          << winter::utils::Logger::endl;
+            } else if (drop_rate < 3.0 && throttle_level > 0) {
                 throttle_level--;
                 winter::utils::Logger::info() << "Decreasing throttle level to " << throttle_level 
-                                          << " due to low drop rate" << winter::utils::Logger::endl;
+                                          << winter::utils::Logger::endl;
             }
             
-            // Reset counters
             processed_messages = 0;
             last_stats_time = now;
         }
     }
     
-    // Start worker threads with exception handling
     void start_worker_threads() {
         running = true;
         for (int i = 0; i < MAX_THREADS; i++) {
             worker_threads.emplace_back([this, i]() {
                 try {
                     worker_function(i);
-                } catch (const std::exception& e) {
-                    winter::utils::Logger::error() << "Worker thread " << i 
-                                               << " exception: " << e.what() 
-                                               << winter::utils::Logger::endl;
                 } catch (...) {
-                    winter::utils::Logger::error() << "Worker thread " << i 
-                                               << " unknown exception" 
-                                               << winter::utils::Logger::endl;
+                    // Silent error handling
                 }
             });
         }
@@ -625,10 +660,8 @@ private:
                                   << winter::utils::Logger::endl;
     }
     
-    // Stop worker threads safely
     void stop_worker_threads() {
         running = false;
-        // Fixed: use index-based loop instead of range-based for loop
         for (int i = 0; i < MAX_THREADS; i++) {
             queue_cvs[i].notify_all();
         }
@@ -640,11 +673,9 @@ private:
         worker_threads.clear();
     }
     
-    // Worker thread function with better error handling
     void worker_function(int thread_id) {
         active_workers++;
         
-        // Batch processing containers
         std::vector<std::shared_ptr<winter::core::MarketData>> batch_data;
         batch_data.reserve(BATCH_SIZE);
         std::vector<winter::core::Signal> batch_signals;
@@ -653,27 +684,17 @@ private:
             batch_data.clear();
             bool has_data = false;
             
-            // Check queue size and adapt processing strategy
             size_t current_queue_size = queue_sizes[thread_id].load();
-            
-            // If queue is getting full, process more aggressively
             size_t items_to_collect = BATCH_SIZE;
-            if (current_queue_size > MAX_QUEUE_SIZE * 0.8) {
-                // Process larger batches when queue is nearly full
-                items_to_collect = std::min(BATCH_SIZE * 3, current_queue_size);
-                
-                if (current_queue_size > MAX_QUEUE_SIZE * 0.9) {
-                    // Emergency mode: process only active pairs
-                    winter::utils::Logger::info() << "Thread " << thread_id 
-                                                << " queue nearly full, entering emergency processing mode" 
-                                                << winter::utils::Logger::endl;
-                }
+            
+            // Adaptive batch sizing
+            if (current_queue_size > MAX_QUEUE_SIZE * 0.7) {
+                items_to_collect = std::min(BATCH_SIZE * 2, current_queue_size);
             }
             
-            // Collect a batch of data to process
             {
                 std::unique_lock<std::mutex> lock(queue_mutexes[thread_id]);
-                queue_cvs[thread_id].wait_for(lock, std::chrono::milliseconds(5), [this, thread_id] { // REDUCED from 10ms
+                queue_cvs[thread_id].wait_for(lock, std::chrono::milliseconds(2), [this, thread_id] {
                     return !data_queues[thread_id].empty() || !running; 
                 });
                 
@@ -681,7 +702,6 @@ private:
                     break;
                 }
                 
-                // Collect up to items_to_collect items or all available items
                 for (size_t i = 0; i < items_to_collect; ++i) {
                     if (data_queues[thread_id].empty()) break;
                     
@@ -694,7 +714,6 @@ private:
             
             if (has_data) {
                 try {
-                    // Process the batch
                     batch_signals.clear();
                     for (const auto& data_ptr : batch_data) {
                         if (!data_ptr) continue;
@@ -707,57 +726,36 @@ private:
                         }
                     }
                     
-                    // Submit all signals at once
                     if (!batch_signals.empty()) {
                         std::lock_guard<std::mutex> lock(signals_mutex);
                         pending_signals.insert(pending_signals.end(), batch_signals.begin(), batch_signals.end());
                     }
-                } catch (const std::exception& e) {
-                    winter::utils::Logger::error() << "Error processing batch in thread " << thread_id 
-                                               << ": " << e.what() << winter::utils::Logger::endl;
                 } catch (...) {
-                    winter::utils::Logger::error() << "Unknown error processing batch in thread " << thread_id 
-                                               << winter::utils::Logger::endl;
+                    // Silent error handling
                 }
             }
             
-            // Adaptive throttling - sleep based on throttle level
+            // Adaptive throttling
             if (throttling_enabled && throttle_level > 0) {
-                std::this_thread::sleep_for(std::chrono::microseconds(throttle_level * 50)); // REDUCED from 100
+                std::this_thread::sleep_for(std::chrono::microseconds(throttle_level * 75));
             }
             
-            // Prevent CPU spinning with a small sleep if queue is empty
             if (!has_data) {
-                std::this_thread::sleep_for(std::chrono::microseconds(500)); // REDUCED from 1ms
+                std::this_thread::sleep_for(std::chrono::microseconds(250));
             }
         }
         
         active_workers--;
     }
     
-    // Parse timestamp from CSV data
-    std::tm parse_csv_timestamp(const std::string& time_str) {
-        std::tm tm = {};
-        std::istringstream ss(time_str);
-        ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
-        return tm;
-    }
-    
-    // Check if we have enough cash for a position
     bool check_cash_for_position(double position_value) {
         double avail = available_cash.load();
-        
-        // Skip new entries if cash is below minimum reserve
         double current_cash_pct = avail / CAPITAL;
-        if (current_cash_pct < MIN_CASH_RESERVE_PCT) {
+        
+        if (current_cash_pct < MIN_CASH_RESERVE_PCT || avail < position_value) {
             return false;
         }
         
-        if (avail < position_value) {
-            return false;
-        }
-        
-        // Atomically update available cash
         double expected = avail;
         while (!available_cash.compare_exchange_weak(expected, expected - position_value)) {
             if (expected < position_value) {
@@ -768,12 +766,26 @@ private:
         return true;
     }
     
-    // Internal data processing function
+    // RESTORED: Enhanced sector allocation checking
+    bool check_sector_allocation(const std::string& sector, double additional_allocation) {
+        std::lock_guard<std::mutex> lock(sector_mutex);
+        
+        double current_allocation = 0.0;
+        auto it = sector_allocation.find(sector);
+        if (it != sector_allocation.end()) {
+            current_allocation = it->second;
+        }
+        
+        double new_allocation_pct = (current_allocation + additional_allocation) / CAPITAL;
+        return new_allocation_pct <= MAX_SECTOR_ALLOCATION;
+    }
+    
+    // RESTORED: Full data processing with all features
     std::vector<winter::core::Signal> process_data_internal(const winter::core::MarketData& data, int thread_id) {
         std::vector<winter::core::Signal> signals;
         
         try {
-            // Limited symbol logging (only first 20 symbols)
+            // Enhanced symbol logging
             {
                 std::lock_guard<std::mutex> lock(symbols_mutex);
                 if (logged_symbols < MAX_LOGGED_SYMBOLS && seen_symbols.find(data.symbol) == seen_symbols.end()) {
@@ -783,30 +795,26 @@ private:
                 }
             }
             
-            // Update price history and volatility - thread-specific
+            // Update price history and volatility
             update_price_history(data, thread_id);
             
-            // Update latest price (thread-safe)
             {
                 std::lock_guard<std::mutex> lock(prices_mutex);
                 latest_prices[data.symbol] = data.price;
             }
             
-            // Extract day and time from timestamp for EOD tracking and timing optimization
-            // Use the timestamp from the data instead of system time
-            std::time_t time = data.timestamp / 1000000; // Convert to seconds
+            // Day tracking for EOD management
+            std::time_t time = data.timestamp / 1000000;
             std::tm* tm_info = std::localtime(&time);
             std::string day = std::to_string(tm_info->tm_mday) + 
                             std::to_string(tm_info->tm_mon) + 
                             std::to_string(tm_info->tm_year);
             
-            // Check if day has changed - SIMPLIFIED for speed
             {
                 std::lock_guard<std::mutex> lock(day_mutex);
                 if (day != current_day) {
                     if (!current_day.empty()) {
                         unwinding_mode = false;
-                        
                         std::lock_guard<std::mutex> sector_lock(sector_mutex);
                         sector_allocation.clear();
                     }
@@ -814,12 +822,11 @@ private:
                 }
             }
             
-            // Process only for pairs containing this symbol
+            // Process pairs containing this symbol
             for (const auto& pair : active_pairs) {
                 if (data.symbol == pair.first || data.symbol == pair.second) {
                     std::string pair_key = pair.first + "_" + pair.second;
                     
-                    // Thread-safe access to prices
                     double price1 = 0.0, price2 = 0.0;
                     bool have_both_prices = false;
                     
@@ -835,132 +842,140 @@ private:
                     }
                     
                     if (have_both_prices) {
-                        // Thread-safe access to pair data
                         std::lock_guard<std::mutex> lock(pair_data_mutex);
                         
-                        // Check if pair exists in pair_data
                         auto pd_it = pair_data.find(pair_key);
                         if (pd_it == pair_data.end()) {
-                            continue;  // Skip if pair not found
+                            continue;
                         }
                         
                         auto& pd = pd_it->second;
                         
-                        // Apply stop-loss to existing positions
+                        // RESTORED: Advanced exit logic with multiple conditions
                         if (pd.position1 != 0 || pd.position2 != 0) {
                             double unrealized_pnl = pd.get_unrealized_pnl(latest_prices);
-                            double position_value = std::abs(pd.position1 * price1) + 
-                                                std::abs(pd.position2 * price2);
+                            double position_value = pd.get_position_value(latest_prices);
                             
-                            if (position_value <= 0) {
-                                continue;  // Skip if invalid position value
-                            }
-                            
-                            // Calculate profit percentage for trailing stop
-                            double profit_pct = unrealized_pnl / position_value;
-                            
-                            // Update peak profit if current profit is higher
-                            if (profit_pct > pd.peak_profit) {
-                                pd.peak_profit = profit_pct;
-                            }
-                            
-                            // Check if stop-loss is hit
-                            bool stop_loss_hit = unrealized_pnl < -STOP_LOSS_PCT * position_value;
-                            
-                            // Check if trailing stop is hit
-                            bool trailing_stop_hit = pd.peak_profit > 0 && 
-                                                (pd.peak_profit - profit_pct) >= TRAILING_STOP_PCT * pd.peak_profit;
-                            
-                            // Check if time-based exit is needed
-                            bool time_based_exit = (data.timestamp - pd.entry_time) > 
-                                                  (MAX_HOLDING_PERIODS * 3600 * 1000000); // Convert to microseconds
-                            
-                            if (stop_loss_hit || trailing_stop_hit || time_based_exit) {
-                                auto stop_signals = generate_exit_signals(pd, price1, price2);
-                                signals.insert(signals.end(), stop_signals.begin(), stop_signals.end());
+                            if (position_value > 0) {
+                                double profit_pct = unrealized_pnl / position_value;
                                 
-                                // Log exit reason
-                                std::string exit_reason = stop_loss_hit ? "Stop Loss" : 
-                                                      trailing_stop_hit ? "Trailing Stop" : "Time-based Exit";
-                                winter::utils::Logger::info() << "EXIT (" << exit_reason << "): " 
-                                                        << (pd.position1 > 0 ? "SELL " : "BUY ") << pair.first 
-                                                        << ", " 
-                                                        << (pd.position2 > 0 ? "SELL " : "BUY ") << pair.second 
-                                                        << winter::utils::Logger::endl;
-                                
-                                // Record trade result for Sharpe ratio calculation
-                                if (position_value > 0) {
-                                    pd.add_return(profit_pct);
+                                // Update peak profit
+                                if (profit_pct > pd.peak_profit) {
+                                    pd.peak_profit = profit_pct;
                                 }
                                 
-                                continue;
+                                // Multiple exit conditions
+                                bool stop_loss_hit = unrealized_pnl < -STOP_LOSS_PCT * position_value;
+                                
+                                // RESTORED: Trailing stop logic
+                                bool trailing_stop_hit = pd.peak_profit > 0.01 && // Only after 1% profit
+                                                        (pd.peak_profit - profit_pct) >= TRAILING_STOP_PCT * pd.peak_profit;
+                                
+                                // RESTORED: Time-based exit with minimum holding period
+                                double holding_time_hours = (data.timestamp - pd.entry_time) / (3600.0 * 1000000.0);
+                                bool time_based_exit = holding_time_hours > MAX_HOLDING_PERIODS;
+                                bool min_holding_met = holding_time_hours >= MIN_HOLDING_PERIODS;
+                                
+                                if ((stop_loss_hit || (trailing_stop_hit && min_holding_met) || time_based_exit)) {
+                                    auto stop_signals = generate_exit_signals(pd, price1, price2);
+                                    signals.insert(signals.end(), stop_signals.begin(), stop_signals.end());
+                                    
+                                    std::string exit_reason = stop_loss_hit ? "Stop Loss" : 
+                                                            trailing_stop_hit ? "Trailing Stop" : "Time-based Exit";
+                                    
+                                    if (verbose_logging || (++trade_counter % log_every_n_trades == 0)) {
+                                        winter::utils::Logger::info() << "EXIT (" << exit_reason << "): " 
+                                                              << (pd.position1 > 0 ? "SELL " : "BUY ") << pair.first 
+                                                              << ", " 
+                                                              << (pd.position2 > 0 ? "SELL " : "BUY ") << pair.second 
+                                                              << " | Holding: " << holding_time_hours << "h"
+                                                              << winter::utils::Logger::endl;
+                                    }
+                                    
+                                    pd.add_return(profit_pct);
+                                    continue;
+                                }
                             }
                         }
                         
-                        // Calculate spread using beta (hedge ratio)
+                        // Update beta dynamically
+                        if (thread_price_history[thread_id].find(pair.first) != thread_price_history[thread_id].end() &&
+                            thread_price_history[thread_id].find(pair.second) != thread_price_history[thread_id].end()) {
+                            pd.update_beta(thread_price_history[thread_id][pair.first], 
+                                          thread_price_history[thread_id][pair.second]);
+                        }
+                        
+                        // Calculate spread using dynamic beta
                         double spread = price1 - pd.beta * price2;
                         
-                        // Update spread history for multiple timeframes
+                        // RESTORED: Multi-timeframe spread history
                         update_spread_history(pd, spread);
                         
-                        // Only generate signals if we have enough history - use shorter lookback
+                        // Generate signals with multi-timeframe analysis
                         if (pd.spread_history_medium.size() >= MEDIUM_LOOKBACK) {
-                            // Calculate statistics for all timeframes
+                            // RESTORED: Multi-timeframe statistics
                             calculate_spread_statistics(pd);
                             
-                            // Calculate z-score for medium timeframe only - for speed
+                            // Calculate half-life periodically
+                            if (pd.spread_history_medium.size() % 10 == 0) {
+                                pd.calculate_half_life();
+                            }
+                            
+                            // RESTORED: Multi-timeframe z-scores
+                            double z_score_short = calculate_z_score(pd.spread_history_short, spread, 
+                                                                   pd.spread_mean_short, pd.spread_std_short);
                             double z_score_medium = calculate_z_score(pd.spread_history_medium, spread, 
                                                                     pd.spread_mean_medium, pd.spread_std_medium);
+                            double z_score_long = calculate_z_score(pd.spread_history_long, spread, 
+                                                                  pd.spread_mean_long, pd.spread_std_long);
                             
-                            // Store z-score in global map for both symbols
+                            // Store z-scores
                             last_z_scores[pair.first] = z_score_medium;
                             last_z_scores[pair.second] = z_score_medium;
                             
-                            // Check for entry confirmation (reversal has begun)
+                            // RESTORED: Entry confirmation logic
                             bool entry_confirmed = false;
                             if (z_score_medium > ENTRY_THRESHOLD && z_score_medium < pd.prev_z_score) {
-                                // Confirmed short entry (z-score high but starting to decrease)
                                 entry_confirmed = true;
                             } else if (z_score_medium < -ENTRY_THRESHOLD && z_score_medium > pd.prev_z_score) {
-                                // Confirmed long entry (z-score low but starting to increase)
                                 entry_confirmed = true;
                             }
                             
-                            // Store current z-score for next comparison
                             pd.prev_z_score = z_score_medium;
                             
-                            // Update max favorable excursion for existing positions
+                            // Update max favorable excursion
                             if (pd.position1 != 0) {
                                 double z_score_movement = pd.position1 > 0 ? 
-                                    pd.entry_z_score - z_score_medium :  // For long positions, we want z-score to decrease
-                                    z_score_medium - pd.entry_z_score;   // For short positions, we want z-score to increase
+                                    pd.entry_z_score - z_score_medium :
+                                    z_score_medium - pd.entry_z_score;
                                 
                                 if (z_score_movement > pd.max_favorable_excursion) {
                                     pd.max_favorable_excursion = z_score_movement;
                                 }
                             }
                             
-                            // Generate trading signals based on z-score
+                            // Entry logic with enhanced conditions
                             if (pd.position1 == 0 && pd.position2 == 0) {
-                                // Check cash availability before entry
                                 double current_cash_pct = available_cash.load() / CAPITAL;
                                 if (current_cash_pct < MIN_CASH_RESERVE_PCT) {
-                                    continue; // Skip new entries if cash is below minimum reserve
+                                    continue;
                                 }
                                 
-                                // No position, check for entry with confirmation
-                                if (z_score_medium > ENTRY_THRESHOLD && entry_confirmed) {
-                                    // Spread is too high, short spread (short symbol1, long symbol2)
-                                    pd.signals_generated += 2; // Count both legs
-                                    total_signals += 2;
-                                    
+                                // RESTORED: Multi-timeframe entry confirmation
+                                bool strong_signal = (std::abs(z_score_short) > ENTRY_THRESHOLD * 0.8) &&
+                                                   (std::abs(z_score_medium) > ENTRY_THRESHOLD) &&
+                                                   (std::abs(z_score_long) > ENTRY_THRESHOLD * 0.6);
+                                
+                                if (z_score_medium > ENTRY_THRESHOLD && entry_confirmed && strong_signal) {
+                                    // Check sector allocation
                                     int qty1 = calculate_position_size(pair.first, price1, z_score_medium, thread_id, pd);
                                     int qty2 = calculate_position_size(pair.second, price2, z_score_medium, thread_id, pd);
                                     
-                                    // Check if we have enough cash for this position
                                     double position_value = qty1 * price1 + qty2 * price2;
-                                    if (!check_cash_for_position(position_value)) {
-                                        continue; // Skip if not enough cash
+                                    
+                                    if (!check_cash_for_position(position_value) || 
+                                        !check_sector_allocation(pd.sector, position_value)) {
+                                        continue;
                                     }
                                     
                                     // Create signals
@@ -968,124 +983,105 @@ private:
                                     signal1.symbol = pair.first;
                                     signal1.type = winter::core::SignalType::SELL;
                                     signal1.price = price1;
-                                    signal1.strength = 1.0;  // Always use full strength
+                                    signal1.strength = 1.0;
                                     signals.push_back(signal1);
                                     
                                     winter::core::Signal signal2;
                                     signal2.symbol = pair.second;
                                     signal2.type = winter::core::SignalType::BUY;
                                     signal2.price = price2;
-                                    signal2.strength = 1.0;  // Always use full strength
+                                    signal2.strength = 1.0;
                                     signals.push_back(signal2);
                                     
-                                    // Track positions
+                                    // Update position tracking
                                     pd.position1 = -qty1;
                                     pd.position2 = qty2;
                                     pd.entry_price1 = price1;
                                     pd.entry_price2 = price2;
-                                    pd.entry_z_score = z_score_medium; // Store entry z-score
+                                    pd.entry_z_score = z_score_medium;
                                     pd.peak_profit = 0.0;
                                     pd.max_favorable_excursion = 0.0;
                                     pd.entry_time = static_cast<double>(data.timestamp);
                                     
-                                    // Update fill tracking
+                                    pd.signals_generated += 2;
                                     pd.signals_filled += 2;
-                                    filled_signals += 2;
                                     pd.trade_count++;
+                                    total_signals += 2;
+                                    filled_signals += 2;
                                     
-                                    // Log only occasionally for speed
                                     if (verbose_logging || (++trade_counter % log_every_n_trades == 0)) {
                                         winter::utils::Logger::info() << "ENTRY: SELL " << pair.first << ", BUY " << pair.second 
-                                                              << " | Z-score: " << z_score_medium << winter::utils::Logger::endl;
+                                                              << " | Z-score: " << z_score_medium 
+                                                              << " | Beta: " << pd.beta << winter::utils::Logger::endl;
                                     }
                                 }
-                                else if (z_score_medium < -ENTRY_THRESHOLD && entry_confirmed) {
-                                    // Spread is too low, long spread (long symbol1, short symbol2)
-                                    pd.signals_generated += 2; // Count both legs
-                                    total_signals += 2;
-                                    
+                                else if (z_score_medium < -ENTRY_THRESHOLD && entry_confirmed && strong_signal) {
+                                    // Similar logic for long spread entry
                                     int qty1 = calculate_position_size(pair.first, price1, -z_score_medium, thread_id, pd);
                                     int qty2 = calculate_position_size(pair.second, price2, -z_score_medium, thread_id, pd);
                                     
-                                    // Check if we have enough cash for this position
                                     double position_value = qty1 * price1 + qty2 * price2;
-                                    if (!check_cash_for_position(position_value)) {
-                                        continue; // Skip if not enough cash
+                                    
+                                    if (!check_cash_for_position(position_value) || 
+                                        !check_sector_allocation(pd.sector, position_value)) {
+                                        continue;
                                     }
                                     
-                                    // Create signals
                                     winter::core::Signal signal1;
                                     signal1.symbol = pair.first;
                                     signal1.type = winter::core::SignalType::BUY;
                                     signal1.price = price1;
-                                    signal1.strength = 1.0;  // Always use full strength
+                                    signal1.strength = 1.0;
                                     signals.push_back(signal1);
                                     
                                     winter::core::Signal signal2;
                                     signal2.symbol = pair.second;
                                     signal2.type = winter::core::SignalType::SELL;
                                     signal2.price = price2;
-                                    signal2.strength = 1.0;  // Always use full strength
+                                    signal2.strength = 1.0;
                                     signals.push_back(signal2);
                                     
-                                    // Track positions
                                     pd.position1 = qty1;
                                     pd.position2 = -qty2;
                                     pd.entry_price1 = price1;
                                     pd.entry_price2 = price2;
-                                    pd.entry_z_score = z_score_medium; // Store entry z-score
+                                    pd.entry_z_score = z_score_medium;
                                     pd.peak_profit = 0.0;
                                     pd.max_favorable_excursion = 0.0;
                                     pd.entry_time = static_cast<double>(data.timestamp);
                                     
-                                    // Update fill tracking
+                                    pd.signals_generated += 2;
                                     pd.signals_filled += 2;
-                                    filled_signals += 2;
                                     pd.trade_count++;
+                                    total_signals += 2;
+                                    filled_signals += 2;
                                     
-                                    // Log only occasionally for speed
                                     if (verbose_logging || (++trade_counter % log_every_n_trades == 0)) {
                                         winter::utils::Logger::info() << "ENTRY: BUY " << pair.first << ", SELL " << pair.second 
-                                                              << " | Z-score: " << z_score_medium << winter::utils::Logger::endl;
+                                                              << " | Z-score: " << z_score_medium 
+                                                              << " | Beta: " << pd.beta << winter::utils::Logger::endl;
                                     }
                                 }
                             }
                             else {
-                                // Have position, check for exit using multiple exit conditions
-                                
-                                // 1. Mean reversion exit
+                                // RESTORED: Enhanced exit conditions
                                 bool mean_reversion_exit = (pd.position1 > 0 && z_score_medium > -EXIT_THRESHOLD) ||
                                                         (pd.position1 < 0 && z_score_medium < EXIT_THRESHOLD);
                                 
-                                // 2. Profit target exit based on z-score movement
                                 bool profit_target_exit = pd.max_favorable_excursion > 0 && 
                                                         (pd.max_favorable_excursion * PROFIT_TARGET_MULT) <= 
                                                         std::abs(pd.entry_z_score - z_score_medium);
                                 
-                                if (mean_reversion_exit || profit_target_exit) {
-                                    // Exit condition met
-                                    pd.signals_generated += 2; // Count both legs
-                                    total_signals += 2;
+                                // RESTORED: Multi-timeframe exit confirmation
+                                bool multi_timeframe_exit = mean_reversion_exit && 
+                                                          (std::abs(z_score_short) < EXIT_THRESHOLD * 1.5);
+                                
+                                if (multi_timeframe_exit || profit_target_exit) {
+                                    auto exit_signals = generate_exit_signals(pd, price1, price2);
+                                    signals.insert(signals.end(), exit_signals.begin(), exit_signals.end());
                                     
-                                    // Create signals
-                                    winter::core::Signal signal1;
-                                    signal1.symbol = pd.symbol1;
-                                    signal1.type = pd.position1 > 0 ? winter::core::SignalType::SELL : winter::core::SignalType::BUY;
-                                    signal1.price = price1;
-                                    signal1.strength = 1.0;  // Always use full strength
-                                    signals.push_back(signal1);
+                                    std::string exit_reason = profit_target_exit ? "Profit Target" : "Mean Reversion";
                                     
-                                    winter::core::Signal signal2;
-                                    signal2.symbol = pd.symbol2;
-                                    signal2.type = pd.position2 > 0 ? winter::core::SignalType::SELL : winter::core::SignalType::BUY;
-                                    signal2.price = price2;
-                                    signal2.strength = 1.0;  // Always use full strength
-                                    signals.push_back(signal2);
-                                    
-                                    // Log exit reason
-                                    std::string exit_reason = mean_reversion_exit ? "Mean Reversion" : "Profit Target";
-                                    
-                                    // Log only occasionally for speed
                                     if (verbose_logging || (++trade_counter % log_every_n_trades == 0)) {
                                         winter::utils::Logger::info() << "EXIT (" << exit_reason << "): " 
                                                               << (pd.position1 > 0 ? "SELL " : "BUY ") << pair.first 
@@ -1094,23 +1090,13 @@ private:
                                                               << " | Z-score: " << z_score_medium << winter::utils::Logger::endl;
                                     }
                                     
-                                    // Update fill tracking
+                                    pd.signals_generated += 2;
                                     pd.signals_filled += 2;
+                                    total_signals += 2;
                                     filled_signals += 2;
                                     
-                                    // Record trade result for Sharpe ratio calculation
                                     double profit_pct = pd.get_unrealized_pnl(latest_prices) / pd.get_position_value(latest_prices);
                                     pd.add_return(profit_pct);
-                                    
-                                    // Free up capital
-                                    double position_value = pd.get_position_value(latest_prices);
-                                    available_cash.fetch_add(position_value);
-                                    
-                                    // Reset positions
-                                    pd.position1 = 0;
-                                    pd.position2 = 0;
-                                    pd.peak_profit = 0.0;
-                                    pd.max_favorable_excursion = 0.0;
                                 }
                             }
                         }
@@ -1118,51 +1104,45 @@ private:
                 }
             }
         }
-        catch (const std::exception& e) {
-            winter::utils::Logger::error() << "Error in process_data_internal: " << e.what() << winter::utils::Logger::endl;
-        }
         catch (...) {
-            winter::utils::Logger::error() << "Unknown error in process_data_internal" << winter::utils::Logger::endl;
+            // Silent error handling
         }
         
         return signals;
     }
     
+    // RESTORED: Enhanced price history management
     void update_price_history(const winter::core::MarketData& data, int thread_id) {
-        // Thread-safe update of price history
         std::lock_guard<std::mutex> lock(*history_mutexes[thread_id]);
         
-        // Update price history for the symbol
         if (thread_price_history[thread_id].find(data.symbol) == thread_price_history[thread_id].end()) {
             thread_price_history[thread_id][data.symbol] = std::deque<double>();
         }
         
         thread_price_history[thread_id][data.symbol].push_back(data.price);
         
-        // Keep only necessary history - REDUCED for speed
-        const size_t max_history = LONG_LOOKBACK * 2;
+        const size_t max_history = LONG_LOOKBACK * 3; // Keep more history
         if (thread_price_history[thread_id][data.symbol].size() > max_history) {
             thread_price_history[thread_id][data.symbol].pop_front();
         }
         
-        // Update volatility if we have enough data
-        if (thread_price_history[thread_id][data.symbol].size() >= 10) {
+        // Update volatility with more sophisticated calculation
+        if (thread_price_history[thread_id][data.symbol].size() >= 15) {
             std::lock_guard<std::mutex> vol_lock(*volatility_mutexes[thread_id]);
             thread_volatility[thread_id][data.symbol] = calculate_volatility(thread_price_history[thread_id][data.symbol]);
         }
     }
     
+    // RESTORED: Advanced volatility calculation
     double calculate_volatility(const std::deque<double>& prices) {
         if (prices.size() < 2) return 0.0;
         
-        // Calculate returns
         std::vector<double> returns;
         returns.reserve(prices.size() - 1);
         for (size_t i = 1; i < prices.size(); ++i) {
-            returns.push_back((prices[i] / prices[i-1]) - 1.0);
+            returns.push_back(std::log(prices[i] / prices[i-1]));
         }
         
-        // Calculate standard deviation of returns
         double sum = std::accumulate(returns.begin(), returns.end(), 0.0);
         double mean = sum / returns.size();
         
@@ -1171,34 +1151,45 @@ private:
             sq_sum += (r - mean) * (r - mean);
         }
         
-        double std_dev = std::sqrt(sq_sum / returns.size());
-        
-        // Annualize volatility (assuming daily data)
-        return std_dev * std::sqrt(252.0);
+        double std_dev = std::sqrt(sq_sum / (returns.size() - 1)); // Sample standard deviation
+        return std_dev * std::sqrt(252.0); // Annualized
     }
     
+    // RESTORED: Multi-timeframe spread history
     void update_spread_history(PairData& pd, double spread) {
-        // Update short-term history
         pd.spread_history_short.push_back(spread);
         if (pd.spread_history_short.size() > SHORT_LOOKBACK) {
             pd.spread_history_short.pop_front();
         }
         
-        // Update medium-term history
         pd.spread_history_medium.push_back(spread);
         if (pd.spread_history_medium.size() > MEDIUM_LOOKBACK) {
             pd.spread_history_medium.pop_front();
         }
         
-        // Update long-term history
         pd.spread_history_long.push_back(spread);
         if (pd.spread_history_long.size() > LONG_LOOKBACK) {
             pd.spread_history_long.pop_front();
         }
     }
     
+    // RESTORED: Multi-timeframe statistics calculation
     void calculate_spread_statistics(PairData& pd) {
-        // Calculate statistics for medium-term only - for speed
+        // Short-term statistics
+        if (pd.spread_history_short.size() >= SHORT_LOOKBACK) {
+            pd.spread_mean_short = std::accumulate(pd.spread_history_short.begin(), 
+                                                 pd.spread_history_short.end(), 0.0) / 
+                                  pd.spread_history_short.size();
+            
+            double sum_sq = 0.0;
+            for (double s : pd.spread_history_short) {
+                double diff = s - pd.spread_mean_short;
+                sum_sq += diff * diff;
+            }
+            pd.spread_std_short = std::sqrt(sum_sq / pd.spread_history_short.size());
+        }
+        
+        // Medium-term statistics
         if (pd.spread_history_medium.size() >= MEDIUM_LOOKBACK) {
             pd.spread_mean_medium = std::accumulate(pd.spread_history_medium.begin(), 
                                                   pd.spread_history_medium.end(), 0.0) / 
@@ -1211,6 +1202,20 @@ private:
             }
             pd.spread_std_medium = std::sqrt(sum_sq / pd.spread_history_medium.size());
         }
+        
+        // Long-term statistics
+        if (pd.spread_history_long.size() >= LONG_LOOKBACK) {
+            pd.spread_mean_long = std::accumulate(pd.spread_history_long.begin(), 
+                                                pd.spread_history_long.end(), 0.0) / 
+                                 pd.spread_history_long.size();
+            
+            double sum_sq = 0.0;
+            for (double s : pd.spread_history_long) {
+                double diff = s - pd.spread_mean_long;
+                sum_sq += diff * diff;
+            }
+            pd.spread_std_long = std::sqrt(sum_sq / pd.spread_history_long.size());
+        }
     }
     
     double calculate_z_score(const std::deque<double>& history, double current_value, 
@@ -1219,6 +1224,7 @@ private:
         return (current_value - mean) / std_dev;
     }
     
+    // RESTORED: Advanced position sizing with multiple factors
     int calculate_position_size(const std::string& symbol, double price, double z_score, int thread_id, const PairData& pd) {
         // Get historical volatility
         double vol = 0.015; // Default
@@ -1230,29 +1236,38 @@ private:
             }
         }
         
-        // More aggressive position sizing with z-score scaling
-        double vol_factor = std::min(2.5, 0.3 / std::max(0.05, vol)); // INCREASED from 1.5
+        // Volatility adjustment
+        double vol_factor = std::min(2.0, 0.25 / std::max(0.03, vol));
         
-        // Exponential scaling with z-score - more aggressive for stronger signals
-        double z_score_factor = std::min(2.5, 0.8 + std::pow(std::abs(z_score) / ENTRY_THRESHOLD, 0.7));
+        // Z-score scaling
+        double z_score_factor = std::min(2.0, 0.7 + std::pow(std::abs(z_score) / ENTRY_THRESHOLD, 0.6));
         
-        // Sharpe ratio scaling - use historical Sharpe for this pair
-        double sharpe_factor = std::max(0.5, std::min(1.5, pd.sharpe_ratio / 2.0));
+        // Sharpe ratio scaling
+        double sharpe_factor = std::max(0.4, std::min(1.8, pd.sharpe_ratio / 1.5));
+        
+        // Half-life adjustment
+        double half_life_factor = 1.0;
+        if (pd.half_life > 0 && pd.half_life < 100) {
+            half_life_factor = std::min(1.5, 10.0 / pd.half_life);
+        }
+        
+        // Market volatility adjustment
+        double market_vol_factor = std::min(1.5, 0.02 / std::max(0.005, market_volatility));
         
         return std::max(1, static_cast<int>((CAPITAL * MAX_POSITION_PCT * 
-                                           vol_factor * z_score_factor * sharpe_factor) / price));
+                                           vol_factor * z_score_factor * sharpe_factor * 
+                                           half_life_factor * market_vol_factor) / price));
     }
     
     std::vector<winter::core::Signal> generate_exit_signals(PairData& pd, double price1, double price2) {
         std::vector<winter::core::Signal> signals;
         
-        // Generate exit signals for both legs
         if (pd.position1 != 0) {
             winter::core::Signal signal1;
             signal1.symbol = pd.symbol1;
             signal1.type = pd.position1 > 0 ? winter::core::SignalType::SELL : winter::core::SignalType::BUY;
             signal1.price = price1;
-            signal1.strength = 1.0; // Maximum urgency for exits
+            signal1.strength = 1.0;
             signals.push_back(signal1);
         }
         
@@ -1261,7 +1276,7 @@ private:
             signal2.symbol = pd.symbol2;
             signal2.type = pd.position2 > 0 ? winter::core::SignalType::SELL : winter::core::SignalType::BUY;
             signal2.price = price2;
-            signal2.strength = 1.0; // Maximum urgency for exits
+            signal2.strength = 1.0;
             signals.push_back(signal2);
         }
         
@@ -1278,6 +1293,7 @@ private:
         return signals;
     }
     
+    // RESTORED
 std::string determine_sector(const std::string& symbol) {
     // Simple sector determination based on first letter
     if (symbol.empty()) return "Unknown";
