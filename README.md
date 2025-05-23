@@ -34,7 +34,7 @@ A high-performance C++ backtesting and trading framework built for statistical a
 ```bash
 # Clone the repository
 git clone https://github.com/RutvikBabar/Winter.git
-cd Winter/Winter2.0
+cd Winter
 
 # Build the framework
 make
